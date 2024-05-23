@@ -55,14 +55,14 @@ CONFIG_GSPI_HCI = n
 ########################## Features ###########################
 CONFIG_AP_MODE = y
 CONFIG_P2P = y
-CONFIG_MP_INCLUDED = n
+CONFIG_MP_INCLUDED = y
 CONFIG_CONCURRENT_MODE = n
 CONFIG_POWER_SAVING = y
 CONFIG_IPS_MODE = default
 CONFIG_LPS_MODE = default
 CONFIG_USB_AUTOSUSPEND = n
 CONFIG_HW_PWRP_DETECTION = n
-CONFIG_BT_COEXIST = y
+CONFIG_BT_COEXIST = n
 CONFIG_WAPI_SUPPORT = n
 CONFIG_EFUSE_CONFIG_FILE = y
 CONFIG_EXT_CLK = n
@@ -76,7 +76,7 @@ CONFIG_RTW_CHPLAN = 0xFF
 CONFIG_RTW_ADAPTIVITY_EN = disable
 CONFIG_RTW_ADAPTIVITY_MODE = normal
 CONFIG_SIGNAL_SCALE_MAPPING = n
-CONFIG_80211W = y
+CONFIG_80211W = n
 CONFIG_REDUCE_TX_CPU_LOADING = n
 CONFIG_BR_EXT = y
 CONFIG_TDLS = n
@@ -89,7 +89,7 @@ CONFIG_RTW_NETIF_SG = y
 CONFIG_RTW_IPCAM_APPLICATION = n
 CONFIG_RTW_REPEATER_SON = n
 CONFIG_ICMP_VOQ = n
-CONFIG_IP_R_MONITOR = n #arp VOQ and high rate
+CONFIG_IP_R_MONITOR = y
 # user priority mapping rule : tos, dscp
 CONFIG_RTW_UP_MAPPING_RULE = tos
 CONFIG_RTW_MBO = n
@@ -103,10 +103,10 @@ EXTRA_CFLAGS += -DCONFIG_RTW_ANDROID=$(CONFIG_RTW_ANDROID)
 endif
 
 ########################## Debug ###########################
-CONFIG_RTW_DEBUG = n
+CONFIG_RTW_DEBUG = y
 # default log level is _DRV_INFO_ = 4,
 # please refer to "How_to_set_driver_debug_log_level.doc" to set the available level.
-CONFIG_RTW_LOG_LEVEL = 2
+CONFIG_RTW_LOG_LEVEL = 3
 
 # enable /proc/net/rtlxxxx/ debug interfaces
 CONFIG_PROC_DEBUG = y
