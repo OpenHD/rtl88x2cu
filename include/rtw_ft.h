@@ -93,20 +93,27 @@ enum rtw_ft_capability {
 
 #define rtw_ft_roam(a)	\
 	((rtw_to_roam(a) > 0) && rtw_ft_chk_flags(a, RTW_FT_PEER_EN))
-	
+
 #define rtw_ft_valid_akm(a, t)	\
 	((rtw_ft_chk_flags(a, RTW_FT_EN)) && \
-	(((t) == 3) || ((t) == 4)))
+	(((t) == 3) || ((t) == 4) || ((t) == 9)))
 
 #define rtw_ft_roam_expired(a, r)	\
 	((rtw_chk_roam_flags(a, RTW_ROAM_ON_EXPIRED)) \
 	&& (r == WLAN_REASON_ACTIVE_ROAM))
 
+/* allow OTD while driver disconnect with current AP */
+#if 1
+#define rtw_ft_otd_roam_en(a)	\
+	((rtw_ft_chk_flags(a, RTW_FT_OTD_EN))	\
+	&& ((a)->mlmepriv.ft_roam.ft_cap & 0x01))
+#else
 #define rtw_ft_otd_roam_en(a)	\
 	((rtw_ft_chk_flags(a, RTW_FT_OTD_EN))	\
 	&& ((a)->mlmepriv.ft_roam.ft_roam_on_expired == _FALSE)	\
 	&& ((a)->mlmepriv.ft_roam.ft_cap & 0x01))
-	
+#endif
+
 #define rtw_ft_otd_roam(a) \
 	rtw_ft_chk_flags(a, RTW_FT_PEER_OTD_EN)
 
@@ -130,7 +137,16 @@ struct ft_roam_info {
 	u8	ft_flags;
 	u32 ft_status;
 	u32 ft_req_retry_cnt;
-	bool ft_updated_bcn;	
+	bool ft_updated_bcn;
+};
+
+struct rtw_sta_ft_info_t {
+	u8 *rsn_ie;
+	u32 rsn_len;
+	u8 *md_ie;
+	u32 md_len;
+	u8 *ft_ie;
+	u32 ft_len;
 };
 
 void rtw_ft_info_init(struct ft_roam_info *pft);
@@ -179,5 +195,22 @@ void rtw_ft_link_timer_hdl(void *ctx);
 void rtw_ft_roam_timer_hdl(void *ctx);
 
 void rtw_ft_roam_status_reset(_adapter *padapter);
+
+void rtw_ft_peer_info_init(struct sta_info *psta);
+
+void rtw_ft_peer_info_free(struct sta_info *psta);
+
+#ifdef CONFIG_RTW_80211R_AP
+int rtw_ft_update_sta_ies(_adapter *padapter,
+	struct cfg80211_update_ft_ies_params *pie);
+
+void rtw_ft_update_assocresp_ies(struct net_device *net,
+	struct cfg80211_ap_settings *settings);
+
+void rtw_ft_process_ft_auth_rsp(_adapter *padapter, u8 *pframe, u32 len);
+
+void rtw_ft_build_assoc_rsp_ies(_adapter *padapter,
+	struct sta_info *psta, struct pkt_attrib *pattrib, u8 **pframe);
+#endif /* CONFIG_RTW_80211R_AP */
 
 #endif /* __RTW_FT_H_ */

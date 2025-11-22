@@ -50,8 +50,8 @@
 #define NBI_128TONE 27 /*register table size*/
 #define NBI_256TONE 59 /*register table size*/
 
-#define NUM_START_CH_80M 7
-#define NUM_START_CH_40M 14
+#define NUM_START_CH_80M 14
+#define NUM_START_CH_40M 29
 
 #define CH_OFFSET_40M 2
 #define CH_OFFSET_80M 6
@@ -196,7 +196,7 @@ phydm_api_set_txagc(void *dm_void, u32 power_index, enum rf_path path,
 
 u8 phydm_api_get_txagc(void *dm_void, enum rf_path path, u8 hw_rate);
 
-#if (RTL8822C_SUPPORT)
+#if (RTL8822C_SUPPORT || RTL8822E_SUPPORT)
 void phydm_shift_rxagc_table(void *dm_void, boolean shift_up, u8 shift);
 #endif
 

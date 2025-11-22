@@ -161,7 +161,9 @@ struct	stainfo_stats	{
 	u32 rxratecnt[128];	/* Read & Clear, in proc_get_rx_stat() */
 	u32 tx_ok_cnt;		/* Read & Clear, in proc_get_tx_stat() */
 	u32 tx_fail_cnt;	/* Read & Clear, in proc_get_tx_stat() */
+	u32 tx_fail_cnt_sum;	/* cumulative counts */
 	u32 tx_retry_cnt;	/* Read & Clear, in proc_get_tx_stat() */
+	u32 tx_retry_cnt_sum;	/* cumulative counts */
 #ifdef CONFIG_RTW_MESH
 	u32 rx_hwmp_pkts;
 	u32 last_rx_hwmp_pkts;
@@ -304,6 +306,7 @@ struct sta_info {
 	union Keytype	dot118021x_UncstKey;
 	union pn48		dot11txpn;			/* PN48 used for Unicast xmit */
 	union pn48		dot11rxpn;			/* PN48 used for Unicast recv. */
+	ATOMIC_T	keytrack;
 #ifdef CONFIG_RTW_MESH
 	/* peer's GTK, RX only */
 	u8 group_privacy;
@@ -416,10 +419,6 @@ struct sta_info {
 
 	u32 akm_suite_type;
 
-#ifdef CONFIG_RTW_80211R
-	u8 ft_pairwise_key_installed;
-#endif
-
 #ifdef CONFIG_NATIVEAP_MLME
 	u8 wpa_ie[32];
 
@@ -519,6 +518,11 @@ struct sta_info {
 #ifdef CONFIG_RTW_TOKEN_BASED_XMIT
 	u8 tbtx_enable;			/* Does this sta_info support & enable TBTX function? */
 //	u8 tbtx_timeslot;		/* This sta_info belong to which time slot.	*/
+#endif
+
+#ifdef CONFIG_RTW_80211R
+	struct rtw_sta_ft_info_t ft_peer;
+	u8 ft_pairwise_key_installed;
 #endif
 
 	/*
@@ -721,9 +725,12 @@ struct	sta_priv {
 #ifdef CONFIG_ATMEL_RC_PATCH
 	u8 atmel_rc_pattern[6];
 #endif
+
+	/* tx report, single request allowed for now */
 	u8 c2h_sta_mac[ETH_ALEN];
 	u8 c2h_adapter_id;
 	struct submit_ctx *gotc2h;
+	_lock tx_rpt_lock;
 };
 
 

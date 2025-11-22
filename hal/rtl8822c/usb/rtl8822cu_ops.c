@@ -54,7 +54,7 @@ static u8 sethwreg(PADAPTER padapter, u8 variable, u8 *val)
 #ifdef CONFIG_PLATFORM_NOVATEK_NT72668
 			pHalData->rxagg_usb_timeout = 0x20;
 			pHalData->rxagg_usb_size = 0x03;
-#elif defined(CONFIG_PLATFORM_HISILICON)
+#elif defined(CONFIG_PLATFORM_HISILICON) || defined(CONFIG_PLATFORM_ARM_RTD299X)
 			/* use 16k to workaround for HISILICON platform */
 			pHalData->rxagg_usb_timeout = 8;
 			pHalData->rxagg_usb_size = 3;
@@ -62,10 +62,14 @@ static u8 sethwreg(PADAPTER padapter, u8 variable, u8 *val)
 			/* reduce rxagg_usb_timeout to avoid rx fifo full at high throughput case */
 			pHalData->rxagg_usb_timeout = 0x10;
 			pHalData->rxagg_usb_size = 0x05;
-#else
+#elif defined(CONFIG_PLATFORM_I386_PC)
 			/* default setting */
 			pHalData->rxagg_usb_timeout = 0x20;
 			pHalData->rxagg_usb_size = 0x05;
+#else
+			/* Avoid the Synopsys USB host receive buffer size limit */
+			pHalData->rxagg_usb_timeout = 0x20;
+			pHalData->rxagg_usb_size = 0x04;
 #endif
 		}
 		rtw_halmac_rx_agg_switch(pdvobjpriv, _TRUE);

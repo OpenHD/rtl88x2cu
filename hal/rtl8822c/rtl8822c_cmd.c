@@ -114,7 +114,7 @@ void _rtl8822c_set_FwPwrMode_cmd(PADAPTER adapter, u8 psmode, u8 rfon_ctrl)
 	u8 h2c[RTW_HALMAC_H2C_MAX_SIZE] = {0};
 	u8 PowerState = 0, awake_intvl = 1, rlbm = 0;
 	u8 allQueueUAPSD = 0;
-	char *fw_psmode_str = "";
+	char *fw_psmode_str = "UNSPECIFIED";
 #ifdef CONFIG_P2P
 	struct wifidirect_info *wdinfo = &adapter->wdinfo;
 #endif /* CONFIG_P2P */
@@ -212,8 +212,6 @@ void _rtl8822c_set_FwPwrMode_cmd(PADAPTER adapter, u8 psmode, u8 rfon_ctrl)
 			fw_psmode_str = "LPS";
 		else if (mode == 2)
 			fw_psmode_str = "WMMPS";
-		else
-			fw_psmode_str = "UNSPECIFIED";
 
 		RTW_INFO(FUNC_ADPT_FMT": fw ps mode = %s, drv ps mode = %d, rlbm = %d ,"
 				    "smart_ps = %d, allQueueUAPSD = %d, PowerState = %d\n",
@@ -390,7 +388,8 @@ C2HTxRPTHandler_8822c(
 )
 {
 	_irqL	 irqL;
-	u8 macid = 0, IniRate = 0;
+	/* u8 macid = 0; */
+	/* u8 IniRate = 0; */
 	u16 TxOK = 0, TxFail = 0;
 	struct sta_priv	*pstapriv = &(GET_PRIMARY_ADAPTER(Adapter))->stapriv, *pstapriv_original = NULL;
 	u8 TxOK0 = 0, TxOK1 = 0;
@@ -415,18 +414,18 @@ C2HTxRPTHandler_8822c(
 		return;
 	}
 
-	macid = C2H_AP_REQ_TXRPT_GET_STA1_MACID(CmdBuf);
+	/* macid = C2H_AP_REQ_TXRPT_GET_STA1_MACID(CmdBuf); */
 	TxOK0 = C2H_AP_REQ_TXRPT_GET_TX_OK1_0(CmdBuf);
 	TxOK1 = C2H_AP_REQ_TXRPT_GET_TX_OK1_1(CmdBuf);
 	TxOK = (TxOK1 << 8) | TxOK0;
 	TxFail0 = C2H_AP_REQ_TXRPT_GET_TX_FAIL1_0(CmdBuf);
 	TxFail1 = C2H_AP_REQ_TXRPT_GET_TX_FAIL1_1(CmdBuf);
 	TxFail = (TxFail1 << 8) | TxFail0;
-	IniRate = C2H_AP_REQ_TXRPT_GET_INITIAL_RATE1(CmdBuf);
+	/* IniRate = C2H_AP_REQ_TXRPT_GET_INITIAL_RATE1(CmdBuf); */
 
 	psta->sta_stats.tx_ok_cnt = TxOK;
 	psta->sta_stats.tx_fail_cnt = TxFail;
-
+	psta->sta_stats.tx_fail_cnt_sum += TxFail;
 }
 
 static void
@@ -461,7 +460,11 @@ C2HSPC_STAT_8822c(
 		return;
 	}
 	psta->sta_stats.tx_retry_cnt = (C2H_SPECIAL_STATISTICS_GET_DATA3(CmdBuf) << 8) | C2H_SPECIAL_STATISTICS_GET_DATA2(CmdBuf);
+	psta->sta_stats.tx_retry_cnt_sum += psta->sta_stats.tx_retry_cnt;
+
+	enter_critical_bh(&pstapriv->tx_rpt_lock);
 	rtw_sctx_done(&pstapriv->gotc2h);
+	exit_critical_bh(&pstapriv->tx_rpt_lock);
 }
 #ifdef CONFIG_FW_HANDLE_TXBCN
 #define C2H_SUB_CMD_ID_FW_TBTT_RPT  0X23
@@ -501,8 +504,6 @@ static void c2h_tbtt_rpt(PADAPTER adapter, u8 *pdata)
  */
 static void process_c2h_event(PADAPTER adapter, u8 *c2h, u32 size)
 {
-	struct mlme_ext_priv *pmlmeext;
-	struct mlme_ext_info *pmlmeinfo;
 	u32 desc_size;
 	u8 id, seq;
 	u8 c2h_len, c2h_payload_len;
@@ -521,9 +522,6 @@ static void process_c2h_event(PADAPTER adapter, u8 *c2h, u32 size)
 			 __FUNCTION__, size, desc_size);
 		return;
 	}
-
-	pmlmeext = &adapter->mlmeextpriv;
-	pmlmeinfo = &pmlmeext->mlmext_info;
 
 	/* shift rx desc len */
 	pc2h_data = c2h + desc_size;
@@ -548,6 +546,12 @@ static void process_c2h_event(PADAPTER adapter, u8 *c2h, u32 size)
 		rtw_bf_c2h_handler(adapter, id, pc2h_data, c2h_len);
 		break;
 #endif /* CONFIG_BEAMFORMING */
+#ifdef CONFIG_BEAMFORMING_MONITOR
+	case CMD_ID_C2H_SND_TXBF:
+		RTW_INFO("BF_MONITOR %s: [CMD_ID_C2H_SND_TXBF] len=%d\n", __FUNCTION__, c2h_payload_len);
+		bf_monitor_c2h_snd_txbf(adapter, pc2h_data, c2h_len);
+		break;
+#endif /* CONFIG_BEAMFORMING_MONITOR */
 
 	case CMD_ID_C2H_AP_REQ_TXRPT:
 		/*RTW_INFO("[C2H], C2H_AP_REQ_TXRPT!!\n");*/
@@ -573,6 +577,12 @@ static void process_c2h_event(PADAPTER adapter, u8 *c2h, u32 size)
 		if (C2H_HDR_GET_C2H_SUB_CMD_ID(pc2h_data) == C2H_SUB_CMD_ID_CCX_RPT) {
 			/* Shift C2H HDR 4 bytes */
 			c2h_ccx_rpt(adapter, pc2h_data);
+			break;
+		}
+
+		if (C2H_HDR_GET_C2H_SUB_CMD_ID(pc2h_data) == C2H_SUB_CMD_ID_C2H_PKT_FW_STATUS_NOTIFY) {
+			RTW_DBG("%s: FW_STATUS_NOTIFY\n", __FUNCTION__);
+			RTW_DBG_DUMP("C2H: ", pc2h_data, c2h_len);
 			break;
 		}
 #ifdef CONFIG_FW_HANDLE_TXBCN
@@ -645,6 +655,10 @@ void rtl8822c_c2h_handler_no_io(PADAPTER adapter, u8 *pbuf, u16 length)
 	case C2H_FW_CHNL_SWITCH_COMPLETE:
 	case C2H_IQK_FINISH:
 	case C2H_MCC:
+#ifdef CONFIG_FW_DUMP_EFUSE
+	case C2H_MAC_HIDDEN_RPT:
+	case C2H_MAC_HIDDEN_RPT_2:
+#endif
 	case C2H_BCN_EARLY_RPT:
 	case C2H_LPS_STATUS_RPT:	
 	case C2H_EXTEND:

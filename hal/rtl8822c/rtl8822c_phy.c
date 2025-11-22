@@ -244,7 +244,7 @@ static u8 _init_rf_reg(PADAPTER adapter)
 			status = odm_config_rf_with_header_file(&hal->odmpriv, CONFIG_RF_RADIO, phydm_path);
 			if (HAL_STATUS_SUCCESS != status)
 				goto exit;
-			ret = _TRUE;
+			/* ret = _TRUE; */
 		}
 	}
 
@@ -385,14 +385,14 @@ void dm_InterruptMigration(PADAPTER adapter)
 {
 	PHAL_DATA_TYPE hal = GET_HAL_DATA(adapter);
 	struct mlme_priv *pmlmepriv = &adapter->mlmepriv;
-	BOOLEAN bCurrentIntMt, bCurrentACIntDisable;
+	BOOLEAN bCurrentIntMt;
+	/* BOOLEAN bCurrentIntMt, bCurrentACIntDisable;*/
 	BOOLEAN IntMtToSet = _FALSE;
-	BOOLEAN ACIntToSet = _FALSE;
-
+	/* BOOLEAN ACIntToSet = _FALSE; */
 
 	/* Retrieve current interrupt migration and Tx four ACs IMR settings first. */
 	bCurrentIntMt = hal->bInterruptMigration;
-	bCurrentACIntDisable = hal->bDisableTxInt;
+	/* bCurrentACIntDisable = hal->bDisableTxInt; */
 
 	/*
 	 * <Roger_Notes> Currently we use busy traffic for reference instead of RxIntOK counts to prevent non-linear Rx statistics
@@ -404,8 +404,10 @@ void dm_InterruptMigration(PADAPTER adapter)
 		IntMtToSet = _TRUE;
 
 		/* To check whether we should disable Tx interrupt or not. */
+		#if 0
 		if (pmlmepriv->LinkDetectInfo.bHigherBusyRxTraffic)
 			ACIntToSet = _TRUE;
+		#endif
 	}
 
 	/* Update current settings. */
@@ -450,10 +452,12 @@ static void init_phydm_cominfo(PADAPTER adapter)
 	RTW_INFO("%s: Fv=%d Cv=%d\n", __FUNCTION__, hal->version_id.VendorType, hal->version_id.CUTVersion);
 	odm_cmn_info_init(p_dm_odm, ODM_CMNINFO_FAB_VER, hal->version_id.VendorType);
 	odm_cmn_info_init(p_dm_odm, ODM_CMNINFO_CUT_VER, hal->version_id.CUTVersion);
-	odm_cmn_info_init(p_dm_odm, ODM_CMNINFO_DIS_DPD
-		, hal->txpwr_pg_mode == TXPWR_PG_WITH_PWR_IDX ? _TRUE : _FALSE);
+	odm_cmn_info_init(p_dm_odm, ODM_CMNINFO_DIS_DPD, _FALSE);
 	odm_cmn_info_init(p_dm_odm, ODM_CMNINFO_TSSI_ENABLE
 		, hal->txpwr_pg_mode == TXPWR_PG_WITH_TSSI_OFFSET ? _TRUE : _FALSE);
+#ifdef CONFIG_RTW_NBI
+	odm_cmn_info_init (p_dm_odm, ODM_CMNINFO_EN_NBI_DETECT, _TRUE);
+#endif
 }
 
 void rtl8822c_phy_init_dm_priv(PADAPTER adapter)
@@ -883,6 +887,13 @@ static void mac_switch_bandwidth(PADAPTER adapter, u8 pri_ch_idx)
 
 	channel = hal->current_channel;
 	bw = hal->current_channel_bw;
+#ifdef CONFIG_NARROWBAND_SUPPORTING
+	if (adapter->registrypriv.rtw_nb_config == RTW_NB_CONFIG_WIDTH_10)
+		err = rtw_halmac_set_bandwidth(adapter_to_dvobj(adapter), channel, pri_ch_idx, HALMAC_BW_10);
+	else if (adapter->registrypriv.rtw_nb_config == RTW_NB_CONFIG_WIDTH_5)
+		err = rtw_halmac_set_bandwidth(adapter_to_dvobj(adapter), channel, pri_ch_idx, HALMAC_BW_5);
+	else
+#endif
 	err = rtw_halmac_set_bandwidth(adapter_to_dvobj(adapter), channel, pri_ch_idx, bw);
 	if (err) {
 		RTW_INFO(FUNC_ADPT_FMT ": (channel=%d, pri_ch_idx=%d, bw=%d) fail\n",
@@ -903,7 +914,7 @@ static void switch_chnl_and_set_bw_by_drv(PADAPTER adapter, u8 switch_band)
 		ret = config_phydm_switch_band_8822c(p_dm_odm, hal->current_channel);
 
 		if (!ret) {
-			RTW_WARN("OpenHD%s: config_phydm_switch_band_8822c fail\n", __FUNCTION__);
+			RTW_INFO("%s: config_phydm_switch_band_8822c fail\n", __FUNCTION__);
 			rtw_warn_on(1);
 			return;
 		}
@@ -915,7 +926,7 @@ static void switch_chnl_and_set_bw_by_drv(PADAPTER adapter, u8 switch_band)
 		hal->bSwChnl = _FALSE;
 
 		if (!ret) {
-			RTW_WARN("OpenHDs: config_phydm_switch_channel_8822c fail\n", __FUNCTION__);
+			RTW_INFO("%s: config_phydm_switch_channel_8822c fail\n", __FUNCTION__);
 			rtw_warn_on(1);
 			return;
 		}
@@ -930,11 +941,23 @@ static void switch_chnl_and_set_bw_by_drv(PADAPTER adapter, u8 switch_band)
 		mac_switch_bandwidth(adapter, pri_ch_idx);
 
 		/* 3.2 set BB/RF registet */
+
+#ifdef CONFIG_NARROWBAND_SUPPORTING
+		if (adapter->registrypriv.rtw_nb_config == RTW_NB_CONFIG_WIDTH_10) {
+			rtw_write8(adapter, REG_CCK_CHECK_8822C,
+				(rtw_read8(adapter, REG_CCK_CHECK_8822C) | BIT_CHECK_CCK_EN_8822C));
+			ret = config_phydm_switch_bandwidth_8822c(p_dm_odm, pri_ch_idx, CHANNEL_WIDTH_10);
+		} else if (adapter->registrypriv.rtw_nb_config == RTW_NB_CONFIG_WIDTH_5) {
+			rtw_write8(adapter, REG_CCK_CHECK_8822C,
+				(rtw_read8(adapter, REG_CCK_CHECK_8822C) | BIT_CHECK_CCK_EN_8822C));
+			ret = config_phydm_switch_bandwidth_8822c(p_dm_odm, pri_ch_idx, CHANNEL_WIDTH_5);
+		} else
+#endif
 		ret = config_phydm_switch_bandwidth_8822c(p_dm_odm, pri_ch_idx, hal->current_channel_bw);
 		hal->bSetChnlBW = _FALSE;
 
 		if (!ret) {
-			RTW_WARN("OpenHD%s: config_phydm_switch_bandwidth_8822c fail\n", __FUNCTION__);
+			RTW_INFO("%s: config_phydm_switch_bandwidth_8822c fail\n", __FUNCTION__);
 			rtw_warn_on(1);
 			return;
 		}
@@ -1003,15 +1026,13 @@ void rtl8822c_switch_chnl_and_set_bw(PADAPTER adapter)
 					&& mlmeext_scan_state(mlmeext) != SCAN_BACKING_OP)
 				drv_switch = _FALSE;
 		}
-	#else
-		u8 drv_switch = _FALSE;
-	#endif
-
 		if (drv_switch == _TRUE)
 			switch_chnl_and_set_bw_by_drv(adapter, switch_band);
 		else
+			switch_chnl_and_set_bw_by_fw(adapter, switch_band);
+	#else
 		switch_chnl_and_set_bw_by_fw(adapter, switch_band);
-
+	#endif
 	} else {
 		switch_chnl_and_set_bw_by_drv(adapter, switch_band);
 	}
@@ -1363,13 +1384,13 @@ static void _sounding_config_su(PADAPTER adapter, struct beamformee_entry *bfee,
 				new_ctrl |= BIT_R_TXBF0_80M_8822C;
 			else if (1 == bfee->su_reg_index)
 				new_ctrl |= BIT_R_TXBF1_80M_8822C;
-			/* fall through */
+			fallthrough;
 		case CHANNEL_WIDTH_40:
 			if (0 == bfee->su_reg_index)
 				new_ctrl |= BIT_R_TXBF0_40M_8822C;
 			else if (1 == bfee->su_reg_index)
 				new_ctrl |= BIT_R_TXBF1_40M_8822C;
-			/* fall through */
+			fallthrough;
 		case CHANNEL_WIDTH_20:
 			if (0 == bfee->su_reg_index)
 				new_ctrl |= BIT_R_TXBF0_20M_8822C;
@@ -1604,8 +1625,6 @@ static void _config_beamformer_su(PADAPTER adapter, struct beamformer_entry *bfe
 
 static void _config_beamformer_mu(PADAPTER adapter, struct beamformer_entry *bfer)
 {
-	/* General */
-	PHAL_DATA_TYPE hal;
 	/* Beamforming */
 	struct beamforming_info *bf_info;
 	u8 nc_index = 0, nr_index = 0;
@@ -1617,7 +1636,6 @@ static void _config_beamformer_mu(PADAPTER adapter, struct beamformer_entry *bfe
 
 	RTW_INFO("%s: Config MU BFer entry HW setting\n", __FUNCTION__);
 
-	hal = GET_HAL_DATA(adapter);
 	bf_info = GET_BEAMFORM_INFO(adapter);
 
 	/* Reset GID table */
@@ -1722,8 +1740,6 @@ static void _config_beamformee_su(PADAPTER adapter, struct beamformee_entry *bfe
 
 static void _config_beamformee_mu(PADAPTER adapter, struct beamformee_entry *bfee)
 {
-	/* General */
-	PHAL_DATA_TYPE hal;
 	/* Beamforming */
 	struct beamforming_info *info;
 	u8 idx;
@@ -1742,7 +1758,6 @@ static void _config_beamformee_mu(PADAPTER adapter, struct beamformee_entry *bfe
 
 	RTW_INFO("%s: Config MU BFee entry HW setting\n", __FUNCTION__);
 
-	hal = GET_HAL_DATA(adapter);
 	info = GET_BEAMFORM_INFO(adapter);
 	idx = bfee->mu_reg_index;
 

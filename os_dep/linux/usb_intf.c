@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2017 Realtek Corporation.
+ * Copyright(c) 2007 - 2022 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -47,6 +47,7 @@ static void rtw_dev_shutdown(struct device *dev)
 	struct usb_interface *usb_intf = container_of(dev, struct usb_interface, dev);
 	struct dvobj_priv *dvobj = NULL;
 	_adapter *adapter = NULL;
+	struct cmd_priv *pcmdpriv;
 
 	RTW_INFO("%s\n", __func__);
 
@@ -70,6 +71,19 @@ static void rtw_dev_shutdown(struct device *dev)
 					else
 					#endif
 					{
+
+						RTW_PRINT("stop cmd thread during %s\n", __func__);
+						rtw_set_drv_stopped(adapter);	/*for stop thread*/
+						rtw_stop_drv_threads(adapter);
+						rtw_cancel_all_timer(adapter);
+						rtw_intf_stop(adapter);
+						pcmdpriv = &adapter->cmdpriv;
+						if (ATOMIC_READ(&(pcmdpriv->cmdthd_running)) == _TRUE) {
+							RTW_ERR("cmd_thread not stop !!\n");
+							rtw_warn_on(1);
+						} else {
+							RTW_PRINT("cmd thread is stopped during %s\n", __func__);
+						}
 						#ifdef CONFIG_BT_COEXIST
 						RTW_INFO("%s call halt notify\n", __FUNCTION__);
 						rtw_btcoex_HaltNotify(adapter);
@@ -292,8 +306,17 @@ static struct usb_device_id rtw_usb_id_tbl[] = {
 #endif /* CONFIG_RTL8814B */
 #ifdef CONFIG_RTL8723F
 	/*=== Realtek IC ===*/
-	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xB733, 0xff, 0xff, 0xff), .driver_info = RTL8723F}, 
+	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xB733, 0xff, 0xff, 0xff), .driver_info = RTL8723F}, /* USB multi-fuction */
+	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xF72B, 0xff, 0xff, 0xff), .driver_info = RTL8723F}, /* USB Single-fuction, WiFi only */
 #endif
+
+#ifdef CONFIG_RTL8822E
+	/*=== Realtek demoboard ===*/
+	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xE822, 0xff, 0xff, 0xff), .driver_info = RTL8822E}, /* Default ID for USB multi-function */
+	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xA82A, 0xff, 0xff, 0xff), .driver_info = RTL8822E}, /* Default ID for USB multi-function */
+	{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDER_ID_REALTEK, 0xA81A, 0xff, 0xff, 0xff), .driver_info = RTL8822E}, /* 8812EU */
+#endif /* CONFIG_RTL8822E */
+
 
 	{}	/* Terminating entry */
 };
@@ -332,7 +355,7 @@ struct rtw_usb_drv usb_drv = {
 	.usbdrv.reset_resume   = rtw_resume,
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
 	.usbdrv.drvwrap.driver.shutdown = rtw_dev_shutdown,
 #else
 	.usbdrv.driver.shutdown = rtw_dev_shutdown,
@@ -502,6 +525,12 @@ static void rtw_decide_chip_type_by_usb_info(struct dvobj_priv *pdvobjpriv, cons
 	if (pdvobjpriv->chip_type == RTL8723F)
 		rtl8723fu_set_hw_type(pdvobjpriv);
 #endif /* CONFIG_RTL8723F */
+
+#ifdef CONFIG_RTL8822E
+	if (pdvobjpriv->chip_type == RTL8822E)
+		rtl8822eu_set_hw_type(pdvobjpriv);
+#endif /* CONFIG_RTL8822E */
+
 }
 
 static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf, const struct usb_device_id *pdid)
@@ -783,6 +812,11 @@ u8 rtw_set_hal_ops(_adapter *padapter)
 	if (rtw_get_chip_type(padapter) == RTL8723F)
 		rtl8723fu_set_hal_ops(padapter);
 #endif /* CONFIG_RTL8723F */
+
+#ifdef CONFIG_RTL8822E
+	if (rtw_get_chip_type(padapter) == RTL8822E)
+		rtl8822eu_set_hal_ops(padapter);
+#endif /* CONFIG_RTL8822E */
 
 	if (_FAIL == rtw_hal_ops_check(padapter))
 		return _FAIL;
@@ -1105,6 +1139,7 @@ _adapter *rtw_usb_primary_adapter_init(struct dvobj_priv *dvobj,
 #else
 	padapter->hw_port = HW_PORT0;
 #endif
+	padapter->adapter_link.adapter = padapter;
 
 	/* step init_io_priv */
 	if (rtw_init_io_priv(padapter, usb_set_intf_ops) == _FAIL)
@@ -1113,7 +1148,9 @@ _adapter *rtw_usb_primary_adapter_init(struct dvobj_priv *dvobj,
 	/* step 2. hook HalFunc, allocate HalData */
 	if (rtw_set_hal_ops(padapter) == _FAIL)
 		goto free_hal_data;
-
+#ifdef CONFIG_FW_DUMP_EFUSE
+	GET_HAL_DATA(padapter)->not_xmitframe_fw_dl = 1;
+#endif
 
 	padapter->intf_start = &usb_intf_start;
 	padapter->intf_stop = &usb_intf_stop;
@@ -1129,6 +1166,9 @@ _adapter *rtw_usb_primary_adapter_init(struct dvobj_priv *dvobj,
 #endif
 	rtw_btcoex_wifionly_initialize(padapter);
 
+#ifdef CONFIG_FW_DUMP_EFUSE
+	_rtw_init_recv_priv(&padapter->recvpriv, padapter);
+#endif
 	/* step read efuse/eeprom data and get mac_addr */
 	if (rtw_hal_read_chip_info(padapter) == _FAIL)
 		goto free_hal_data;
@@ -1137,6 +1177,9 @@ _adapter *rtw_usb_primary_adapter_init(struct dvobj_priv *dvobj,
 	if (rtw_init_drv_sw(padapter) == _FAIL) {
 		goto free_hal_data;
 	}
+#ifdef CONFIG_FW_DUMP_EFUSE
+	GET_HAL_DATA(padapter)->not_xmitframe_fw_dl = 0;
+#endif
 
 #ifdef CONFIG_PM
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18))
@@ -1177,6 +1220,15 @@ _adapter *rtw_usb_primary_adapter_init(struct dvobj_priv *dvobj,
 	status = _SUCCESS;
 
 free_hal_data:
+#ifdef CONFIG_FW_DUMP_EFUSE
+	if (status != _SUCCESS && padapter->recvpriv.pallocated_frame_buf) {
+		rtw_hal_inirp_deinit(padapter);
+#ifdef CONFIG_NEW_SIGNAL_STAT_PROCESS
+		_cancel_timer_ex(&padapter->recvpriv.signal_stat_timer);
+#endif
+		_rtw_free_recv_priv(&padapter->recvpriv);
+	}
+#endif /* CONFIG_FW_DUMP_EFUSE */
 	if (status != _SUCCESS && padapter->HalData)
 		rtw_hal_free_data(padapter);
 free_adapter:

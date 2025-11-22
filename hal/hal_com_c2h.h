@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2017 Realtek Corporation.
+ * Copyright(c) 2007 - 2022 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -75,6 +75,7 @@ typedef enum _C2H_EVT {
 	C2H_PER_RATE_RPT = 0x2c,
 #endif
 	C2H_LPS_STATUS_RPT = 0x32,
+	C2H_BT_LE_AUDIO_INFO = 0x46,
 	C2H_SET_TXPWR_FINISH = 0x70,
 	C2H_DEFEATURE_RSVD = 0xFD,
 	C2H_EXTEND = 0xff,
@@ -93,6 +94,8 @@ int	c2h_iqk_offload_wait(_adapter *adapter, u32 timeout_ms);
 #define rtl8812_iqk_wait c2h_iqk_offload_wait /* TODO: remove this after phydm call c2h_iqk_offload_wait instead */
 
 #ifdef CONFIG_RTW_MAC_HIDDEN_RPT
+void c2h_mac_hidden_rpt_done(struct _ADAPTER *a);
+
 /* C2H_MAC_HIDDEN_RPT, 0x19 */
 #define MAC_HIDDEN_RPT_LEN 8
 int c2h_mac_hidden_rpt_hdl(_adapter *adapter, u8 *data, u8 len);

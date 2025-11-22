@@ -93,6 +93,16 @@
 #define IEEE80211_RADIOTAP_AMPDU_EOF_KNOWN		0x0080
 #endif
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22))
+/* For IEEE80211_RADIOTAP_TX_FLAGS */
+#define IEEE80211_RADIOTAP_F_TX_FAIL	0x0001	/* failed due to excessive
+						 * retries */
+#define IEEE80211_RADIOTAP_F_TX_CTS	0x0002	/* used cts 'protection' */
+#define IEEE80211_RADIOTAP_F_TX_RTS	0x0004	/* used rts/cts handshake */
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 2, 0))
+#define IEEE80211_RADIOTAP_F_TX_NOACK	0x0008	/* don't expect an ack */
+#endif
+
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 39))
 #define IEEE80211_RADIOTAP_MCS 19
 /* For IEEE80211_RADIOTAP_MCS */
@@ -163,7 +173,7 @@ static inline void _rtw_radiotap_fill_flags(struct rx_pkt_attrib *a, u8 *flags)
 
 sint rtw_fill_radiotap_hdr(_adapter *padapter, struct rx_pkt_attrib *a, u8 *buf)
 {
-#define RTAP_HDR_MAX 64
+#define RTAP_HDR_MAX 256
 
 	sint ret = _SUCCESS;
 	struct moinfo *moif = (struct moinfo *)&a->moif;
@@ -198,13 +208,14 @@ sint rtw_fill_radiotap_hdr(_adapter *padapter, struct rx_pkt_attrib *a, u8 *buf)
 
 	/* each antenna information */
 	rx_cnt = rf_type_to_rf_rx_cnt(pHalData->rf_type);
-#if 0
+#if 1
 	if (rx_cnt > 1) {
 		rtap_hdr->it_present |= BIT(IEEE80211_RADIOTAP_RADIOTAP_NAMESPACE) |
 		BIT(IEEE80211_RADIOTAP_EXT);
 
 		for (i = 1; i < rx_cnt; i++) {
 			tmp_32bit = (BIT(IEEE80211_RADIOTAP_DBM_ANTSIGNAL) |
+                                     BIT(IEEE80211_RADIOTAP_DBM_ANTNOISE) |
 				     BIT(IEEE80211_RADIOTAP_LOCK_QUALITY) |
 				     BIT(IEEE80211_RADIOTAP_ANTENNA) |
 				     BIT(IEEE80211_RADIOTAP_RADIOTAP_NAMESPACE) |
@@ -214,6 +225,7 @@ sint rtw_fill_radiotap_hdr(_adapter *padapter, struct rx_pkt_attrib *a, u8 *buf)
 		}
 
 		tmp_32bit = (BIT(IEEE80211_RADIOTAP_DBM_ANTSIGNAL) |
+                             BIT(IEEE80211_RADIOTAP_DBM_ANTNOISE) |
 			     BIT(IEEE80211_RADIOTAP_LOCK_QUALITY) |
 			     BIT(IEEE80211_RADIOTAP_ANTENNA));
 		_rtw_memcpy(&hdr_buf[rt_len], &tmp_32bit, 4);
@@ -516,9 +528,12 @@ sint rtw_fill_radiotap_hdr(_adapter *padapter, struct rx_pkt_attrib *a, u8 *buf)
 		rt_len += 4;
 
 		/* u8 coding, phystat? */
-		hdr_buf[rt_len] = 0;
+		if (moif->u.snif_info.ldpc & 0x01)
+			hdr_buf[rt_len] |= 0x01;
+		else
+			hdr_buf[rt_len] = 0;
 		rt_len += 1;
-
+		
 		/* u8 group_id */
 		hdr_buf[rt_len] = moif->u.snif_info.vht_group_id;
 		rt_len += 1;
@@ -556,12 +571,16 @@ sint rtw_fill_radiotap_hdr(_adapter *padapter, struct rx_pkt_attrib *a, u8 *buf)
 	}
 
 	/* each antenna information */
-#if 0
+#if 1
 	if (rx_cnt > 1) {
 		for (i = 0; i <= rx_cnt; i++) {
 			/* dBm Antenna Signal */
-			hdr_buf[rt_len] = a->phy_info.rx_mimo_signal_strength[i];
+			hdr_buf[rt_len] = a->phy_info.rx_pwr[i];
 			rt_len += 1;
+
+                        /*  IEEE80211_RADIOTAP_DBM_ANTNOISE */
+                        hdr_buf[rt_len] = a->phy_info.rx_pwr[i] - a->phy_info.rx_snr[i];
+                        rt_len += 1;
 
 			/* Signal Quality */
 			if (!IS_ALIGNED(rt_len, 2))

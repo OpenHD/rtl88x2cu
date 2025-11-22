@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2017 Realtek Corporation.
+ * Copyright(c) 2007 - 2022 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -32,6 +32,13 @@
 
 #if defined(CONFIG_RTW_ACS) || defined(CONFIG_BACKGROUND_NOISE_MONITOR)
 #include "../hal/hal_dm_acs.h"
+#endif
+
+#include "../hal/hal_pwr_table.h"
+#include "../hal/hal_dfs.h"
+
+#ifdef CONFIG_BEAMFORMING_MONITOR
+#include "../hal/rtl8822c/rtl8822c_bf_monitor.h"
 #endif
 
 /*
@@ -86,13 +93,6 @@ typedef enum _RT_AMPDU_BRUST_MODE {
 	RT_AMPDU_BRUST_8812_15	= 6,
 	RT_AMPDU_BRUST_8723B		= 7,
 } RT_AMPDU_BRUST, *PRT_AMPDU_BRUST_MODE;
-
-/* Tx Power Limit Table Size */
-#define MAX_REGULATION_NUM						4
-#define MAX_RF_PATH_NUM_IN_POWER_LIMIT_TABLE	4
-#define MAX_2_4G_BANDWIDTH_NUM					2
-#define MAX_RATE_SECTION_NUM						10
-#define MAX_5G_BANDWIDTH_NUM						4
 
 #define NUM_OF_TARGET_TXPWR_2G	10 /* CCK:1, OFDM:1, HT:4, VHT:4 */
 #define NUM_OF_TARGET_TXPWR_5G	9 /* OFDM:1, HT:4, VHT:4 */
@@ -229,6 +229,14 @@ struct hal_spec_t {
 	u16 macid_txrpt;
 	u8 macid_txrpt_pgsz;
 
+#ifdef CONFIG_USB_HCI
+	/* A certain HW is designed to take responsibility for replying 0xEA when */
+	/* MAC's clock is off. Because this HW is not designed in some ICs, there */
+	/* is a limitation on accessing the off area of mac to causes bus error. */
+	/* e.g. driver is into card disable or low clock mode.*/
+	u8 mac_off_access_limit_in_low_clock;
+#endif
+
 	u8 rfpath_num_2g:4;	/* used for tx power index path */
 	u8 rfpath_num_5g:4;	/* used for tx power index path */
 	u8 rf_reg_path_num;
@@ -314,38 +322,6 @@ typedef struct hal_p2p_ps_para {
 	u32 noa_count_para;
 } HAL_P2P_PS_PARA, *PHAL_P2P_PS_PARA;
 
-#define TXPWR_LMT_RS_CCK	0
-#define TXPWR_LMT_RS_OFDM	1
-#define TXPWR_LMT_RS_HT		2
-#define TXPWR_LMT_RS_VHT	3
-#define TXPWR_LMT_RS_NUM	4
-
-#define TXPWR_LMT_RS_NUM_2G	4 /* CCK, OFDM, HT, VHT */
-#define TXPWR_LMT_RS_NUM_5G	3 /* OFDM, HT, VHT */
-
-#if CONFIG_TXPWR_LIMIT
-extern const char *const _txpwr_lmt_rs_str[];
-#define txpwr_lmt_rs_str(rs) (((rs) >= TXPWR_LMT_RS_NUM) ? _txpwr_lmt_rs_str[TXPWR_LMT_RS_NUM] : _txpwr_lmt_rs_str[(rs)])
-
-struct txpwr_lmt_ent {
-	_list list;
-
-	s8 lmt_2g[MAX_2_4G_BANDWIDTH_NUM]
-		[TXPWR_LMT_RS_NUM_2G]
-		[CENTER_CH_2G_NUM]
-		[MAX_TX_COUNT];
-
-#if CONFIG_IEEE80211_BAND_5GHZ
-	s8 lmt_5g[MAX_5G_BANDWIDTH_NUM]
-		[TXPWR_LMT_RS_NUM_5G]
-		[CENTER_CH_5G_ALL_NUM]
-		[MAX_TX_COUNT];
-#endif
-
-	char regd_name[0];
-};
-#endif /* CONFIG_TXPWR_LIMIT */
-
 typedef struct hal_com_data {
 	HAL_VERSION			version_id;
 	RT_MULTI_FUNC		MultiFunc; /* For multi-function consideration. */
@@ -379,7 +355,6 @@ typedef struct hal_com_data {
 	u8				nCur40MhzPrimeSC;	/* Control channel sub-carrier */
 	u8				nCur80MhzPrimeSC;   /* used for primary 40MHz of 80MHz mode */
 	BOOLEAN		bSwChnlAndSetBWInProgress;
-	u8				bDisableSWChannelPlan; /* flag of disable software change channel plan	 */
 	u16				BasicRateSet;
 	u32				ReceiveConfig;
 #ifdef CONFIG_WIFI_MONITOR
@@ -391,6 +366,10 @@ typedef struct hal_com_data {
 	BOOLEAN			bSWToBW40M;
 	BOOLEAN			bSWToBW80M;
 	BOOLEAN			bChnlBWInitialized;
+
+#ifdef CONFIG_DFS_MASTER
+	struct rtw_dfs_t dfs_info;
+#endif
 
 #ifdef CONFIG_RTW_ACS
 	struct auto_chan_sel acs;
@@ -453,6 +432,8 @@ typedef struct hal_com_data {
 	u8	EEPROMVersion;
 	u8	EEPROMRegulatory;
 	u8	eeprom_thermal_meter;
+	u8	eeprom_thermal_meter_multi[MAX_RF_PATH];
+	u8	eeprom_thermal_offset_temperature;
 	u8	EEPROMBluetoothCoexist;
 	u8	EEPROMBluetoothType;
 	u8	EEPROMBluetoothAntNum;
@@ -525,10 +506,15 @@ typedef struct hal_com_data {
 	u8	target_txpwr_5g[TX_PWR_BY_RATE_NUM_RF]
 		[NUM_OF_TARGET_TXPWR_5G];
 
+#if CONFIG_TXPWR_LIMIT
+	struct txpwr_lmt_tb_t txpwr_lmt_tb;
+#endif
+
 	bool set_entire_txpwr;
 
-#if defined(CONFIG_RTL8821C) || defined(CONFIG_RTL8822B) || defined(CONFIG_RTL8822C) || defined(CONFIG_RTL8814B) \
-    || defined(CONFIG_RTL8723F)
+#if defined(CONFIG_RTL8821C) || defined(CONFIG_RTL8822B) \
+	|| defined(CONFIG_RTL8822C) || defined(CONFIG_RTL8814B) \
+	|| defined(CONFIG_RTL8723F) || defined(CONFIG_RTL8822E)
 	u32 txagc_set_buf;
 #endif
 
@@ -672,7 +658,8 @@ typedef struct hal_com_data {
 	/* SDIO Rx FIFO related. */
 	/*  */
 	u8			SdioRxFIFOCnt;
-#if defined (CONFIG_RTL8822C) || defined (CONFIG_RTL8192F)
+#if defined(CONFIG_RTL8822C) || defined(CONFIG_RTL8192F) \
+	|| defined(CONFIG_RTL8822E)
 	u32			SdioRxFIFOSize;
 #else
 	u16			SdioRxFIFOSize;
@@ -826,6 +813,10 @@ typedef struct hal_com_data {
 #endif /* RTW_BEAMFORMING_VERSION_2 */
 #endif /* CONFIG_BEAMFORMING */
 
+#ifdef CONFIG_BEAMFORMING_MONITOR
+        struct csi_rpt_monitor csi_rpt_monitor;
+#endif
+
 	u8 not_xmitframe_fw_dl; /*not use xmitframe to download fw*/
 	u8 phydm_op_mode;
 
@@ -841,6 +832,21 @@ typedef struct hal_com_data {
 	u8 dma_ch_map[32];	/* TXDESC qsel maximum size */
 #endif
 
+#ifndef RTW_HALMAC /* for SIFS initial value */
+	u16 init_reg_0x428;
+	u32 init_reg_0x514;
+	u16 init_reg_0x63a;
+	u32 init_reg_0x63c;
+#endif
+
+	u8 tx_pause[PAUSE_RSON_MAX];
+
+#ifdef CONFIG_FW_DUMP_EFUSE
+	_lock fw_efuse_lock;
+	struct submit_ctx *fw_efuse_sctx;
+#endif
+
+	_adapter *adapter;
 } HAL_DATA_COMMON, *PHAL_DATA_COMMON;
 
 typedef struct hal_com_data HAL_DATA_TYPE, *PHAL_DATA_TYPE;
@@ -876,6 +882,9 @@ typedef struct hal_com_data HAL_DATA_TYPE, *PHAL_DATA_TYPE;
 
 #ifdef RTW_HALMAC
 int rtw_halmac_deinit_adapter(struct dvobj_priv *);
+#ifdef CONFIG_MP_INCLUDED
+int rtw_halmac_set_gpio(struct dvobj_priv *d, u8 gpio_id, u8 gpio_enable, u8 gpio_func_offset, u8 gpio_mode);
+#endif
 #endif /* RTW_HALMAC */
 
 #endif /* __HAL_DATA_H__ */

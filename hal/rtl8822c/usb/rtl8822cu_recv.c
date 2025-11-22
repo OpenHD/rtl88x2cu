@@ -160,7 +160,7 @@ int recvbuf2recvframe(PADAPTER padapter, void *ptr)
 		pbuf += pkt_offset;
 #endif
 		transfer_len -= pkt_offset;
-		precvframe = NULL;
+		/* precvframe = NULL; */
 
 	} while (transfer_len > 0);
 

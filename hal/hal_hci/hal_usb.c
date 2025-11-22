@@ -23,10 +23,11 @@ int	usb_init_recv_priv(_adapter *padapter, u16 ini_in_buf_sz)
 	struct recv_priv	*precvpriv = &padapter->recvpriv;
 	int	i, res = _SUCCESS;
 	struct recv_buf *precvbuf;
+	u8 alloc_ok = 0, alloc_fail = 0;
 
 #ifdef PLATFORM_LINUX
 	tasklet_init(&precvpriv->recv_tasklet,
-		     (void(*)(unsigned long))usb_recv_tasklet,
+		     usb_recv_tasklet,
 		     (unsigned long)padapter);
 #endif /* PLATFORM_LINUX */
 
@@ -99,6 +100,9 @@ int	usb_init_recv_priv(_adapter *padapter, u16 ini_in_buf_sz)
 #if defined(PLATFORM_LINUX) || defined(PLATFORM_FREEBSD)
 
 	skb_queue_head_init(&precvpriv->rx_skb_queue);
+#ifdef CONFIG_USB_PROTECT_RX_CLONED_SKB
+	skb_queue_head_init(&precvpriv->rx_cloned_skb_queue);
+#endif
 
 #ifdef CONFIG_RX_INDICATE_QUEUE
 	memset(&precvpriv->rx_indicate_queue, 0, sizeof(struct ifqueue));
@@ -137,8 +141,13 @@ int	usb_init_recv_priv(_adapter *padapter, u16 ini_in_buf_sz)
 				skb_reserve(pskb, (RECVBUFF_ALIGN_SZ - alignment));
 #endif
 				skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+
+				alloc_ok++;
+			} else {
+				alloc_fail++;
 			}
 		}
+		RTW_INFO("Init Rx buffer skb ok count=%d, fail count=%d\n", alloc_ok, alloc_fail);
 	}
 #endif /* CONFIG_PREALLOC_RECV_SKB */
 
@@ -155,6 +164,10 @@ void usb_free_recv_priv(_adapter *padapter, u16 ini_in_buf_sz)
 	struct registry_priv *regsty = &padapter->registrypriv;
 	struct recv_buf *precvbuf;
 	struct recv_priv	*precvpriv = &padapter->recvpriv;
+
+#ifdef PLATFORM_LINUX
+	tasklet_kill(&precvpriv->recv_tasklet);
+#endif
 
 	precvbuf = (struct recv_buf *)precvpriv->precv_buf;
 

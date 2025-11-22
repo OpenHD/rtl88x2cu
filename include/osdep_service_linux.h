@@ -153,6 +153,16 @@
 
 #endif
 
+/*
+ * MLD related linux kernel patch in
+ * Android Common Kernel android13-5.15
+ * refs/heads/common-android13-5.15-2023-04 (5.15.94)
+ * refs/heads/android13-5.15-lts (5.15.106)
+ */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 94) )
+        #define CONFIG_MLD_KERNEL_PATCH
+#endif
+
 typedef struct	semaphore _sema;
 typedef	spinlock_t	_lock;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37))
@@ -313,7 +323,7 @@ __inline static void exit_critical_bh(_lock *plock)
 	spin_unlock_bh(plock);
 }
 
-__inline static int _enter_critical_mutex(_mutex *pmutex, _irqL *pirqL)
+__inline static int _rtw_mutex_lock_interruptible(_mutex *pmutex)
 {
 	int ret = 0;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37))
@@ -325,8 +335,7 @@ __inline static int _enter_critical_mutex(_mutex *pmutex, _irqL *pirqL)
 	return ret;
 }
 
-
-__inline static int _enter_critical_mutex_lock(_mutex *pmutex, _irqL *pirqL)
+__inline static int _rtw_mutex_lock(_mutex *pmutex)
 {
 	int ret = 0;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37))
@@ -337,7 +346,7 @@ __inline static int _enter_critical_mutex_lock(_mutex *pmutex, _irqL *pirqL)
 	return ret;
 }
 
-__inline static void _exit_critical_mutex(_mutex *pmutex, _irqL *pirqL)
+__inline static void _rtw_mutex_unlock(_mutex *pmutex)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37))
 	mutex_unlock(pmutex);
@@ -345,6 +354,10 @@ __inline static void _exit_critical_mutex(_mutex *pmutex, _irqL *pirqL)
 	up(pmutex);
 #endif
 }
+
+#define _enter_critical_mutex(pmutex, pirqL) _rtw_mutex_lock_interruptible(pmutex)
+#define _enter_critical_mutex_lock(pmutex, pirqL) _rtw_mutex_lock(pmutex)
+#define _exit_critical_mutex(pmutex, pirqL) _rtw_mutex_unlock(pmutex)
 
 __inline static _list	*get_list_head(_queue	*queue)
 {
@@ -378,6 +391,11 @@ __inline static void _init_timer(_timer *ptimer, _nic_hdl nic_hdl, void *pfunc, 
 	ptimer->timer.data = (unsigned long)ptimer;
 	init_timer(&ptimer->timer);
 #endif
+}
+
+__inline static int _check_timer_is_active(_timer *ptimer)
+{
+	return timer_pending(&ptimer->timer);
 }
 
 __inline static void _set_timer(_timer *ptimer, u32 delay_time)
@@ -526,6 +544,15 @@ static inline int rtw_merge_string(char *dst, int dst_len, const char *src1, con
 /* Atomic integer operations */
 #define ATOMIC_T atomic_t
 
+
+#if defined(DBG_MEM_ERR_FREE)
+void rtw_dbg_mem_init(void);
+void rtw_dbg_mem_deinit(void);
+#else
+#define rtw_dbg_mem_init() do {} while (0)
+#define rtw_dbg_mem_deinit() do {} while (0)
+#endif /* DBG_MEM_ERR_FREE */
+
 #define rtw_netdev_priv(netdev) (((struct rtw_netdev_priv_indicator *)netdev_priv(netdev))->priv)
 
 #define NDEV_FMT "%s"
@@ -560,5 +587,21 @@ extern struct net_device *rtw_alloc_etherdev(int sizeof_priv);
 
 #define STRUCT_PACKED __attribute__ ((packed))
 
+#ifndef fallthrough
+#if __GNUC__ >= 5 || defined(__clang__)
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+#if __has_attribute(__fallthrough__)
+#define fallthrough __attribute__((__fallthrough__))
+#endif
+#endif
+#ifndef fallthrough
+#define fallthrough do {} while (0) /* fallthrough */
+#endif
+#endif
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
+#define dev_addr_mod(dev, offset, addr, len) _rtw_memcpy(&dev->dev_addr[offset], addr, len)
+#endif
 #endif /* __OSDEP_LINUX_SERVICE_H_ */

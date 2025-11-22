@@ -15,7 +15,7 @@
 #ifndef __RTW_ODM_H__
 #define __RTW_ODM_H__
 
-#include <drv_types.h>
+/* #include <drv_types.h> */
 #include "../hal/phydm/phydm_types.h"
 /*
 * This file provides utilities/wrappers for rtw driver to use ODM
@@ -76,6 +76,7 @@ void rtw_odm_init_ic_type(_adapter *adapter);
 void rtw_odm_adaptivity_config_msg(void *sel, _adapter *adapter);
 
 bool rtw_odm_adaptivity_needed(_adapter *adapter);
+void rtw_odm_adaptivity_update(struct dvobj_priv *dvobj);
 void rtw_odm_adaptivity_parm_msg(void *sel, _adapter *adapter);
 void rtw_odm_adaptivity_parm_set(_adapter *adapter, s8 th_l2h_ini, s8 th_edcca_hl_diff);
 void rtw_odm_get_perpkt_rssi(void *sel, _adapter *adapter);
@@ -85,13 +86,27 @@ void rtw_odm_releasespinlock(_adapter *adapter,	enum rt_spinlock_type type);
 struct dm_struct;
 s16 rtw_odm_get_tx_power_mbm(struct dm_struct *dm, u8 rfpath, u8 rate, u8 bw, u8 cch);
 
+#if CONFIG_TXPWR_LIMIT
+enum txpwr_lmt_reg_exc_match {
+	TXPWR_LMT_REG_EXC_MATCH_NONE = 0,
+	TXPWR_LMT_REG_EXC_MATCH_COUNTRY,
+	TXPWR_LMT_REG_EXC_MATCH_DOMAIN,
+};
+
+enum txpwr_lmt_reg_exc_match rtw_txpwr_hal_lmt_reg_exc_search(struct dvobj_priv* dvobj, const char *country, u8 domain, const char **reg_name);
+bool rtw_txpwr_hal_lmt_reg_search(struct dvobj_priv* dvobj, const char *name);
+void rtw_txpwr_hal_set_current_lmt_regs_by_name(struct dvobj_priv* dvobj, enum band_type band, char *names, int names_len);
+void rtw_txpwr_hal_get_current_lmt_regs_name(struct dvobj_priv* dvobj, enum band_type band, char **names, int *names_len);
+#endif /* CONFIG_TXPWR_LIMIT */
+
 #ifdef CONFIG_DFS_MASTER
-void rtw_odm_radar_detect_reset(_adapter *adapter);
-void rtw_odm_radar_detect_disable(_adapter *adapter);
-void rtw_odm_radar_detect_enable(_adapter *adapter);
-BOOLEAN rtw_odm_radar_detect(_adapter *adapter);
-void rtw_odm_update_dfs_region(struct dvobj_priv *dvobj);
-u8 rtw_odm_radar_detect_polling_int_ms(struct dvobj_priv *dvobj);
+bool rtw_dfs_hal_region_supported(struct dvobj_priv* dvobj, enum rtw_dfs_regd domain);
+void rtw_dfs_hal_update_region(struct dvobj_priv *dvobj, u8 band_idx, enum rtw_dfs_regd domain);
+void rtw_dfs_hal_radar_detect_disable(struct dvobj_priv *dvobj, u8 band_idx);
+void rtw_dfs_hal_radar_detect_enable(struct dvobj_priv *dvobj, u8 band_idx, bool cac, u8 ch, enum channel_width bw, enum chan_offset offset);
+void rtw_dfs_hal_set_cac_status(struct dvobj_priv *dvobj, u8 band_idx, bool cac);
+void rtw_dfs_hal_radar_detect_result_polling(struct dvobj_priv *dvobj, u8 band_idx, u8 *radar_cch, u8 *radar_bw);
+u8 rtw_dfs_hal_radar_detect_polling_int_ms(struct dvobj_priv *dvobj);
 #endif /* CONFIG_DFS_MASTER */
 
 void rtw_odm_parse_rx_phy_status_chinfo(union recv_frame *rframe, u8 *phys);

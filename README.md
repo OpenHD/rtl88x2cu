@@ -1,69 +1,318 @@
-# REALTEK RTL88x2C USB Linux Driver
+![realtek_logo](doc/image/realtek_logo.png)
+# rtl88x2cu_ohd
+Linux Driver for WiFi Adapters that are based on the RTL8812CU and RTL8822CU Chipsets, based on driver ```v5.15.0.1-197```
 
-**Current Driver Version**: 5.12.1  
-**Supported Kernels**: 2.3-6.8
+This branch is mainly focused on FPV and includes the OpenHD-specific naming and configuration overrides.
 
-## Table of Contents
-1. [Introduction](#introduction)
-2. [Features](#features)
-3. [Requirements](#requirements)
-4. [Installation](#installation)
-5. [Usage](#usage)
-6. [Troubleshooting](#troubleshooting)
-7. [Contributing](#contributing)
-8. [License](#license)
-9. [Acknowledgements](#acknowledgements)
+PRs welcome.
 
-## Introduction
-This repository contains the Linux driver for the Realtek RTL88x2CU chipset, with Injection and Monitor Mode support.
-It's ported to the latest kernel's and will be maintained by OpenHD.
-
-## Features
-- **Compatibility**: TBD
-
-
-## Requirements
-- **Linux Kernel**: >2.3
-- **Build Tools**: `make`, `gcc`, and other standard build tools.
+## Hardware 
+BL-M8812CU2 or any adaptor based on RTL8812CU/RTL8822CU should be ok.  
 
 ## Installation
-To install the driver, follow these steps:
+### Platform Configuration
+For arm (32-bit), run: 
+```
+sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+sed -i 's/CONFIG_PLATFORM_ARM_RPI = n/CONFIG_PLATFORM_ARM_RPI = y/g' Makefile
+```
+Or, for arm64, run: 
+```
+sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+sed -i 's/CONFIG_PLATFORM_ARM64_RPI = n/CONFIG_PLATFORM_ARM64_RPI = y/g' Makefile
+```
+### Build / Install with DKMS
+This driver can be installed using [DKMS]. This is a system which will automatically recompile and install a kernel module when a new kernel gets installed or updated. To make use of DKMS, install the dkms package, which on Debian (based) systems is done like this:
+```
+sudo apt-get install dkms
+```
+#### Installation of Driver
+In order to install the driver open a terminal in the directory with the source code and execute the following command:
+```
+sudo ./dkms-install.sh
+```
+#### Removal of Driver
+In order to remove the driver from your system open a terminal in the directory with the source code and execute the following command:
+```
+sudo ./dkms-remove.sh
+```
+### Build / Install with make
+For building & installing the driver with 'make' use
+```
+make
+sudo make install
+```
+## For setting monitor mode
+### Install tools:
+```
+sudo apt-get install tcpdump wireless-tools net-tools
+```
+### load the driver:
+```
+sudo modprobe cfg80211
+sudo insmod 88x2cu_ohd.ko rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0
+```
+### Fix problematic interference in monitor mode.
+```
+sudo airmon-ng check kill
+```
+### Set interface down
+```
+sudo ip link set wlan0 down
+or...
+sudo ifconfig wlan0 down
+```
+### Set monitor mode
+```
+sudo airmon-ng start wlan0
+or...
+sudo iw dev wlan0 set type monitor
+```
+### Set interface up
+```
+sudo ip link set wlan0 up
+or...
+sudo ifconfig wlan0 up
+```
+### Set RF channel and bandwidth
+```
+iwlist wlan0 channel
+# sudo iw dev wlan0 set channel 165 10MHz
+# sudo iw dev wlan0 set channel 165 5MHz
+# sudo iw dev wlan0 set channel 165 HT40-
+# sudo iw dev wlan0 set channel 165 HT40+
+sudo iw dev wlan0 set channel 165 HT20
+```
+### For setting TX power to a fixed mBm (0=min, 3150=max). 
+The real TX power measured increased accordingly when increasing the mbm value. When mbm increases by 500, the signal strength increases by +5dB, but when mbm is higher than ~2000, the PA starts to saturate and the increase becomes smaller
+```
+sudo iw dev wlan0 set txpower fixed <mBm>
+```
 
-1. **Clone the Repository**:
-    ```bash
-    git clone https://github.com/openhd/rtl88x2cu
-    cd rtl88x2cu
+```iw``` will not show the correct value if the TX power has been overridden. To check the current setting, the only table is to:
+```
+cat /proc/net/rtl88x2cu_ohd/wlan0/tx_power_idx
+```
+
+Note: TX power setting for Realtek chips is some internal, dimensionless value, only positively related to the real TX power. One of the goals in "MP calibration" is to find the value set of the TX power index, to keep the TX power in every channel at the same level the datasheet gives, then save those values into the crab chip's eFuse. 
+That's the only thing that could match the power index to real dBm without any measurement.
+
+#### ANT0_5825MHz_20M_11n_MCS1_mBm=1700
+RF power 21dBm, offset 4dB for  tx_power_idx, EVM -20dB, Mask Margins 6dB(min). 
+![realtek_logo](doc/image/ANT0_5825MHz_20M_11n_MCS1_mBm=1700.jpg)
+
+#### ANT0_5825MHz_20M_11n_MCS1_mBm=1800
+RF power 23dBm, offset 5dB for  tx_power_idx, EVM -15dB, Mask Margins -1dB(min). Tx performance has deteriorated.
+![realtek_logo](doc/image/ANT0_5825MHz_20M_11n_MCS1_mBm=1800.jpg)
+
+#### ANT0_5825MHz_20M_11n_MCS1_mBm=2000
+RF power 24.4dBm, offset 4dB for  tx_power_idx, EVM -13dB, Mask Margins -5dB(min). Tx performance has deteriorated.
+![realtek_logo](doc/image/ANT0_5825MHz_20M_11n_MCS1_mBm=2000.jpg)
+
+#### ANT0_5825MHz_20MHz_11n_MCS7_mBm=1200
+RF power 18dBm, offset 6dB for  tx_power_idx, EVM -29dB, Mask Margins 15dB(min). ```-M 7``` in ```wfb_tx``` to change MCS.
+![realtek_logo](doc/image/ANT0_5825MHz_20MHz_11n_MCS7_mBm=1200.jpg)
+
+### Check RF channel data
+Check if there is any data on the rf channel.
+```
+sudo tcpdump -i wlan0
+```
+
+## Narrowband Transmission 
+### Injection in Different Bandwidth
+#### 10MHz Injection
+To transmit packets in monitor mode using packet injection:
+ - Set  on both air & ground
+ ```
+ sudo iw dev wlan0 set channel 165 10MHz
+ ```
+ - Set the inject packet's radiotap header with any **20MHz bandwidth** modulation (legacy/HT20/VHT20; e.g. ```-B 20``` in ```wfb_tx```) 
+Then the packet is actually transmitted in 10MHz bandwidth, which seems like being achieved by simply underclocking the baseband.  
+It's the same on the receiver side, though in which the radiotap header in received packets still indicates a 20MHz bandwidth. You can check that with any SDR receiver or spectrum analyzer.
+
+###### ANT0_5825MHz_10M_11n_MCS1_mBm=1700
+RF power 20dBm, offset 3dB for tx_power_idx, EVM -22dB, Mask Margins 6dB(min). 
+![realtek_logo](doc/image/ANT0_5825MHz_10M_11n_MCS1_mBm=1700.jpg)
+
+##### Notes About "Devices or Resources Busy" 
+When ```iw``` says ```Devices or Resources Busy (-16)```, check ```iw <wlan> info``` if the ```iw``` recognized the adaptor is in monitor mode.   
+If not, ```iw <wlan> set monitor```, then try setting 10MHz again.  
+That's because:  
+1. The crab driver supports both WEXT and cfg80211 APIs, but it seems that it's not that robust and there's some conflicts exist
+2. the cfg80211 API checks [here](https://github.com/OpenIPC/linux/blob/eb50a943c26845925ff11ccb1651c40fa02c105e/net/wireless/chan.c#L862) if there's any other interface is not in monitor mode
+3. If the monitor mode is set by ```iwconfig```, the process is done by calling the old WEXT APIs, so the cfg80211-based ```iw``` may not get the latest status and think the interface is still in managed mode
+
+##### 5MHz Injection
+To transmit packets in monitor mode using packet injection:
+ - Set  on both air & ground
+ ```
+ sudo iw dev wlan0 set channel 165 5MHz
+ ```
+###### ANT0_5825MHz_5M_11n_MCS1_mBm=1700
+RF power 20dBm, offset 3dB for tx_power_idx, EVM -22dB, Mask Margins 3dB(min). 
+![realtek_logo](doc/image/ANT0_5825MHz_5M_11n_MCS1_mBm=1700.jpg)
+
+##### Note about Changing TX Power in Narrowband Modes
+Changing TX power by ```iw``` will not work when injecting with 10MHz BW.  
+You should manually set BW back to 20MHz, set TX power, then set BW back again.  
+
+#### 20/40/80MHz Injection
+Use ```iw``` to set channel & NOHT/HT20/HT40/80MHz bandwidth, then set the correct bandwidth in the radiotap header (can be done by using ```-B``` in wfb-ng)   
+
+### 10MHz BW AP/STA 
+According to the module vendor's ambiguous document and the crab's mysterious driver tar with a "_10MHz" suffix:  
+1. Enable ```CONFIG_NARROWBAND_SUPPORTING``` in ```include/hal_ic_cfg.h``` (in ```#ifdef CONFIG_RTL8822C``` section if using RTL8812CU), then ```#define CONFIG_NB_VALUE RTW_NB_CONFIG_WIDTH_10``` below
+2. Rename ```hal/rtl8822c/hal8822c_fw_10M.*``` into ```hal/rtl8822c/hal8822c_fw.*``` to replace the original firmware
+3. Now you get the "<tar_name>_10MHz" driver. Rebuild the driver
+4. ```iw``` Set the channel to 10MHz bandwidth
+5. If there are any tools complain about the Wi-Fi regularities when setting up a 10MHz AP,  try setting the channel plan manually by ```echo 0x3E > /proc/net/rtl88x2cu_ohd/<wlan>/chan_plan```.
+6. Check the ACK timeout setting below if the range is >\~3km
+7. Check ```/proc/net/rtl88x2cu_ohd/<wlan>/rate_ctl``` for manually control of the rate if needed. See [@Vito-Swift's tutorial here](https://github.com/Vito-Swift/rtl8814au-ext/blob/main/doc/how_to_do_unicast_rc.md)  
+
+## Set (Unlocked) Channel in procfs  
+The chip's RF synthesizer can work in a bit wider range than regular 5GHz Wi-Fi. May be 5080MHz ~ 6165MHz. 
+
+To see usage.  
+```
+cat /proc/net/rtl88x2cu_ohd/wlan0/monitor_chan_override
+```
+
+Usage: echo "<chan> <bw>" > monitor_chan_override.  
+chan:	16~253, freq=channel*5+5000.  
+bw:	10/20/40/80, MHz. Not determing the bandwidth, but should be the same as 'iw'.  
+1. To transmit in 6005MHz with 10MHz BW, you should: 
+	 - use 'iw' to set the bandwidth to 10MHz in any channel 
+	 - use '-B 20' in 'wfb-ng' or any other tools
+	 - echo "201 10" > monitor_chan_override
+
+2. To transmit in 5080MHz with 20MHz BW: 
+	 - use 'iw' to set the bandwidth to 20MHz in any channel 
+	 - use '-B 20' in 'wfb-ng' or any other tools
+	 - echo "16 20" > monitor_chan_override
+
+3. To transmit in 5255MHz with 40MHz BW: 
+	 - use 'iw' to set the bandwidth to HT40 in any channel 
+	 - use '-B 40' in 'wfb-ng' or any other tools
+	 - echo "51 40" > monitor_chan_override
+
+Disclaimer: Some chip may not lock on some frequency. There's no guarantee on performance. The unlocked frequency may damage your hardware. You should obey the law, and use it at your own risk.
+
+I decided to use procfs is that it doesn't need any changes in user-space tools, e.g. iw, hostapd.  
+Of course, you can use this "procfs API" to set regular channels like 149 or 36. Might be useful when developing any Wi-Fi-based broadcast FPV system with frequency hopping and automatic bandwidth.  
+
+I recommend using ```iw``` to set the channel first if the channel is usable. Only use the procfs method for irregular.  
+The channel can only be set to any frequency with a 5MHz step since the channel number was directly written into some register, not some divider of the synthesizer. 
+
+### ANT0_5925MHz_10M_11n_MCS1_mBm=1700
+RF power 20dBm, offset 3dB for tx_power_idx, EVM -22dB, Mask Margins 7dB(min). 
+![realtek_logo](doc/image/ANT0_5925MHz_10M_11n_MCS1_mBm=1700.jpg)
+
+### ANT0_6000MHz_10M_11n_MCS1_mBm=1700
+RF power 19dBm, offset 2dB for tx_power_idx, EVM -26dB, Mask Margins 10dB(min). 
+![realtek_logo](doc/image/ANT0_6000MHz_10M_11n_MCS1_mBm=1700.jpg)
+
+### ANT0_6000MHz_10M_11n_MCS1_mBm=1800
+RF power 22dBm, offset 4dB for tx_power_idx, EVM -17dB, Mask Margins -1dB(min). Tx performance has deteriorated.
+![realtek_logo](doc/image/ANT0_6000MHz_10M_11n_MCS1_mBm=1800.jpg)
+
+DISCLAIMER:  
+Some chips' synthesizer's PLL may not lock on some frequency. There's no guarantee of its performance. (Actually, TX power and distortion seem worse in these channels as it's not calibrated. But less interference - it's an either-or)
+
+## EDCCA
+### Override default EDCCA Threshold  
+To override dafault EDCCA threshold, check ```cat /proc/net/rtl88x2cu_ohd/wlan0/edcca_threshold_jaguar3_override```.  
+
+e.g. ```echo "1 -30" > /proc/net/rtl88x2cu_ohd/wlan0/edcca_threshO1d_jaguar3_Override```   
+That means: before sending any packet, the adaptor checks if there's any signal with higher than -30dBm (L2H) power exists.
+If there are any, the adaptor will wait until the energy level in the air is lower than -38dBm (H2L). Then your transmission starts.
+
+Note that there are actually two values, L2H and H2L. The L2H is typically set 8dB higher so it creates a hysteresis.
+The value you're setting is L2H. The H2L is automatically set 8dB lower.
+
+### Disable CCA (EXPERIMENTAL)
+```echo "1" > /proc/net/rtl88x2cu_ohd/wlan0/dis_cca```  
+Needs test. 10/20MHz BW only.  
+
+## ACK Timeout 
+Provided by Realtek.
+e.g. Set ACK timeout to 100us:  
+```echo 100 > /proc/net/rtl88x2cu_ohd/wlan0/ack_timeout```  
+
+## 802.11 DCF hacking   
+### SIFS
+EXPERIMENTAL, may not work.  
+```/proc/net/rtl88x2cu_ohd/wlan0/sifs_override```  
+
+### Slot time 
+EXPERIMENTAL, may not work.  
+```/proc/net/rtl88x2cu_ohd/wlan0/slottime_override```  
+
+DISCLAIMER: There's no guarantee of its performance.
+
+## Noise Monitor 
+Update: The code controlled by ```CONFIG_BACKGROUND_NOISE_MONITOR``` is dedicated to Jaguar(1) series (e.g. 8812au), not for Jaguar3 (8812cu/eu). 
+The code used fix gain (IGI), gated the clock of the baseband & MAC, read ADC data of the I/Q channel via some debug register, calculated the magnitude (can represent the noise floor), and then resumed the clock. So it's doable in any chipset as long as there's an ADC debug register with the definition known, but unfortunately not for 8812cu now.
+
+If you know anything more about it, please tell us in the issue.  
+
+## Thermometer  
+The chip contains a thermometer for calibrating the RF part dynamically. It can be used to estimate the chip temperature.  
+e.g. To read the temperature:  
+```
+cat /proc/net/rtl88x2cu_ohd/wlan0/thermal_state 
+```
+Note: This value is not accurate enough. The LSB of its ADC only represents 2.5K and contains a measured value as the offset.   
+However, it can be used to estimate the status of the chip, "cool/warm/hot/smoked/crispy".  
+The offset can be tuned by ```echo "<offset>" > /proc/net/rtl88x2cu_ohd/wlan0/thermal_state```. By default, it's ```32```, based on my measurement.  
+
+## TX NPATH setting  
+Realtek didn't say anything about the feature, but IMO it should be the Cyclic Shift Diversity (CSD) feature (A 'sine wave' can be seen on top of the OFDM spectrum when enabled).  
+Only works when 1. injecting legacy rates, or 2. injecting in MCS rates with only 1 spatial stream enabled and STBC disabled.  
+Use ```rtw_tx_npath_enable=1``` when ```insmod``` to enable the feature. You can see a significant input current difference.  
+Like the STBC, it's another transmit diversity technique. Need more tests to tell the difference in the FPV scenario.  
+
+## Generating Single Tone  
+To generate a single tone at the carrier frequency, 
+ 1. Set monitor mode & any channel, e.g. ```iwconfig wlan0 mode monitor channel 52``` (5260 MHz)
+ 2. ```echo "1 4" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone```, in which ```<EN:0/1>```, ```<RF_PATH:0(A)/1(B)/4(AB)>```
+ 3. Remember to set ```EN``` back to ```0``` before any normal operation
+
+Useful when generating any signal without PAPR matters.  
+The amplitude of the sine wave seems can not be controlled. It's only a test mode for the LO, so the functionality may not be good enough.
+
+### Generating the 5.340 GHz Single Tone 
+1. Set the adapter to monitor mode (see nic_quick_test.sh). Any 5 GHz channel is ok for the script argument.
+    ```
+    sudo ./nic_quick_test.sh wlan0 60
+    ```
+2. Set the center frequency to 5.340 GHz (Channel 68). The frequency is usually disabled due to wireless regulation, so use /proc
+    ```
+    echo "68 20" > /proc/net/rtl88x2cu_ohd/wlan0/monitor_chan_override   # freq = 5000+68*5 = 5340 MHz
+    ```
+3. Generate single tone. The blue square has two IPEX connector J0 and J1 (see BL-M8812CU2 datasheet)
+    ```
+    echo "1 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone               # Output at J0 only
+    # echo "1 1" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone              # Output at J1 only
+    # echo "1 4" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone              # Output at both J0 and J1
+    ```
+4. Change to some other frequency
+    ```
+    echo "0 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone            # !! ALWAYS DISABLE THE OUTPUT FIRST !!
+    echo "69 20" > /proc/net/rtl88x2cu_ohd/wlan0/monitor_chan_override   # 5345 MHz
+    echo "1 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone               # Output at J0 only
+    ```
+5. Change to some other frequency
+    ```
+    echo "0 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone            # !! ALWAYS DISABLE THE OUTPUT FIRST !!
+    echo "67 20" > /proc/net/rtl88x2cu_ohd/wlan0/monitor_chan_override   # 5335 MHz
+    echo "1 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone               # Output at J0 only
+    ```
+6. Disable the output
+    ```
+    echo "0 0" > /proc/net/rtl88x2cu_ohd/wlan0/single_tone               # !! DISABLE THE OUTPUT !!
     ```
 
-2. **Build and Install the Driver**:
-    ```bash
-    make
-    sudo make install
-    sudo modprobe 88x2cu_ohd
-    ```
-
-## Usage
-Once the driver is installed, plug in your Realtek RTL88x2CU USB wireless adapter. The system should recognize the device, and you can manage wireless connections through your network manager.
-
-## Troubleshooting
-- **Device Not Recognized**: Ensure the driver is correctly installed and loaded:
-    ```bash
-    sudo modprobe 88x2cu_ohd
-    dmesg | grep 88x2cu_ohd
-    ```
-- **Build Errors**: Verify that all build dependencies are installed and that your kernel headers match your running kernel.
-
-## Contributing
-Contributions are welcome! To contribute:
-
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature-branch`).
-3. Make your changes and commit them (`git commit -m 'Add new feature'`).
-4. Push to the branch (`git push origin feature-branch`).
-5. Open a Pull Request.
-
-## License
-This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-Special thanks to Realtek for providing the original driver source. This project builds upon their efforts to improve compatibility and performance for Linux users.
+### ANT0_5340MHz_Single_Tone
+RF power 15dBm. 
+![realtek_logo](doc/image/ANT0_5340MHz_Single_Tone.jpg)

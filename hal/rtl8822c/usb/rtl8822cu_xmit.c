@@ -100,26 +100,63 @@ static s32 update_txdesc(struct xmit_frame *pxmitframe, u8 *pmem, s32 sz, u8 bag
 	SET_TX_DESC_QSEL_8822C(ptxdesc,  pattrib->qsel);
 
 	/*offset 12 */
-	if (!pattrib->qos_en) {
-		/* HW sequence, to fix to use 0 queue. todo: 4AC packets to use auto queue select */
-		SET_TX_DESC_DISQSELSEQ_8822C(ptxdesc, 1);
-		SET_TX_DESC_EN_HWSEQ_8822C(ptxdesc, 1);/* Hw set sequence number */
-		SET_TX_DESC_HW_SSN_SEL_8822C(ptxdesc, pattrib->hw_ssn_sel);
-		SET_TX_DESC_EN_HWEXSEQ_8822C(ptxdesc, 0);
-	} else
-		SET_TX_DESC_SW_SEQ_8822C(ptxdesc, pattrib->seqnum);
+	// Not injected
+	if (pattrib->inject != 0xa5) {
+		if (!pattrib->qos_en) {
+			/* HW sequence, to fix to use 0 queue. todo: 4AC packets to use auto queue select */
+			SET_TX_DESC_DISQSELSEQ_8822C(ptxdesc, 1);
+			SET_TX_DESC_EN_HWSEQ_8822C(ptxdesc, 1);/* Hw set sequence number */
+			SET_TX_DESC_HW_SSN_SEL_8822C(ptxdesc, pattrib->hw_ssn_sel);
+			SET_TX_DESC_EN_HWEXSEQ_8822C(ptxdesc, 0);
+		} else {
+			SET_TX_DESC_SW_SEQ_8822C(ptxdesc, pattrib->seqnum);
+		}
+	}
 
-	if ((pxmitframe->frame_tag & 0x0f) == DATA_FRAMETAG) {
+	/* injected frame */
+	if (pattrib->inject == 0xa5) {
+		/* Prevent sequence number from being overwritten */
+		SET_TX_DESC_EN_HWSEQ_8822C(ptxdesc, 0); /* Hw do not set sequence number */
+		SET_TX_DESC_SW_SEQ_8822C(ptxdesc, pattrib->seqnum); /* Copy inject sequence number to TxDesc */
+
+		SET_TX_DESC_RTY_LMT_EN_8822C(ptxdesc, 1);
+
+		if (pattrib->retry_ctrl == _TRUE) {
+			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 6); // todo: idk if it's the correct api
+		} else {
+			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 0);
+		}
+		if (pattrib->sgi == _TRUE) {
+			SET_TX_DESC_DATA_SHORT_8822C(ptxdesc, 1);
+		} else {
+			SET_TX_DESC_DATA_SHORT_8822C(ptxdesc, 0);
+		}
+
+		// ?
+		//SET_TX_DESC_DISABLE_FB_8812(ptxdesc, 1); // svpcom: ?
+		SET_TX_DESC_DISDATAFB_8822C(ptxdesc, 1);   // ?
+		SET_TX_DESC_DISRTSFB_8822C(ptxdesc, 1);	   // See issue #2
+
+		SET_TX_DESC_USE_RATE_8822C(ptxdesc, 1);
+		SET_TX_DESC_DATARATE_8822C(ptxdesc, MRateToHwRate(pattrib->rate));
+
+		if (pattrib->ldpc) {
+			SET_TX_DESC_DATA_LDPC_8822C(ptxdesc, 1);
+		}
+		SET_TX_DESC_DATA_STBC_8822C(ptxdesc, pattrib->stbc & 3);
+		SET_TX_DESC_DATA_BW_8822C(ptxdesc, pattrib->bwmode); // 0 - 20 MHz, 1 - 40 MHz, 2 - 80 MHz
+
+	} else if ((pxmitframe->frame_tag & 0x0f) == DATA_FRAMETAG) {
 		/* RTW_INFO("pxmitframe->frame_tag == DATA_FRAMETAG\n");	*/
 		rtl8822c_fill_txdesc_sectype(pattrib, ptxdesc);
 #ifdef CONFIG_TCP_CSUM_OFFLOAD_TX
-	if (pattrib->hw_csum == 1) {
-		int offset = 48 + pxmitframe->pkt_offset*8 + 24;
+		if (pattrib->hw_csum == 1) {
+			int offset = 48 + pxmitframe->pkt_offset*8 + 24;
 
-		SET_TX_DESC_OFFSET_8822C(ptxdesc, offset);
-		SET_TX_DESC_CHK_EN_8822C(ptxdesc, 1);
-		SET_TX_DESC_WHEADER_LEN_8822C(ptxdesc, (pattrib->hdrlen + pattrib->iv_len + XATTRIB_GET_MCTRL_LEN(pattrib))>>1);
-	}
+			SET_TX_DESC_OFFSET_8822C(ptxdesc, offset);
+			SET_TX_DESC_CHK_EN_8822C(ptxdesc, 1);
+			SET_TX_DESC_WHEADER_LEN_8822C(ptxdesc, (pattrib->hdrlen + pattrib->iv_len + XATTRIB_GET_MCTRL_LEN(pattrib))>>1);
+		}
 #endif
 
 		/* offset 20 */
@@ -243,8 +280,6 @@ static s32 update_txdesc(struct xmit_frame *pxmitframe, u8 *pmem, s32 sz, u8 bag
 #endif
 	} else if ((pxmitframe->frame_tag & 0x0f) == MGNT_FRAMETAG) {
 		/* RTW_INFO("pxmitframe->frame_tag == MGNT_FRAMETAG\n");	*/
-		//RTW_WARN("OpenHD pxmitframe->frame_tag & 0x0f) == MGNT_FRAMETAG\n");
-        // OpenHD: These are monitor mode frames
 		SET_TX_DESC_MBSSID_8822C(ptxdesc, pattrib->mbssid & 0xF);
 
 		SET_TX_DESC_USE_RATE_8822C(ptxdesc, 1);
@@ -254,27 +289,17 @@ static s32 update_txdesc(struct xmit_frame *pxmitframe, u8 *pmem, s32 sz, u8 bag
 
 		SET_TX_DESC_RTY_LMT_EN_8822C(ptxdesc, 1);
 		if (pattrib->retry_ctrl == _TRUE)
-			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 32); //Original 6
+			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 6);
 		else
-			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 0); //Original 12
-
-		if(pattrib->monitor_mode_frame==_TRUE){
-            //RTW_WARN("OpenHD Is monitor frame ldpc:%d stbc:%d bw:%d\n",(int)pattrib->stbc,(int)pattrib->ldpc,(int)pattrib->bwmode);
-            if (pattrib->ldpc)
-                SET_TX_DESC_DATA_LDPC_8822C(ptxdesc, 1);
-            if (pattrib->stbc)
-                SET_TX_DESC_DATA_STBC_8822C(ptxdesc, 1);
-            SET_TX_DESC_DATA_BW_8822C(ptxdesc, pattrib->bwmode);
-            if(pattrib->sgi == _TRUE) {
-                SET_TX_DESC_DATA_SHORT_8822C(ptxdesc, 1);
-            } else {
-                SET_TX_DESC_DATA_SHORT_8822C(ptxdesc, 0);
-            }
-        }
+			SET_TX_DESC_RTS_DATA_RTY_LMT_8822C(ptxdesc, 12);
 
 		/* VHT NDPA or HT NDPA Packet for Beamformer. */
 		rtl8822c_fill_txdesc_mgnt_bf(pxmitframe, ptxdesc);
-
+#if defined(CONFIG_CHANGE_DTIM_PERIOD) && defined(CONFIG_AP_MODE)
+		/* BIT7: enable bit */
+		if (pattrib->subtype == WIFI_BEACON && pattrib->dtim_period > 0)
+			SET_TX_DESC_GROUP_BIT_IE_OFFSET_8822C(ptxdesc, pattrib->tim_ie_offset | BIT(7));
+#endif
 #ifdef CONFIG_XMIT_ACK
 		/* CCX-TXRPT ack for xmit mgmt frames */
 		if (pxmitframe->ack_report) {
@@ -860,7 +885,7 @@ static s32 rtl8822cu_xmitframe_complete(PADAPTER padapter, struct xmit_priv *pxm
 }
 #endif
 
-static void rtl8822cu_xmit_tasklet(void *priv)
+static void rtl8822cu_xmit_tasklet(unsigned long priv)
 {
 	int ret = _FALSE;
 	_adapter *padapter = (_adapter *)priv;
@@ -891,7 +916,7 @@ s32	rtl8822cu_init_xmit_priv(PADAPTER padapter)
 
 #ifdef PLATFORM_LINUX
 	tasklet_init(&pxmitpriv->xmit_tasklet,
-		     (void(*)(unsigned long))rtl8822cu_xmit_tasklet,
+		     rtl8822cu_xmit_tasklet,
 		     (unsigned long)padapter);
 #endif
 #ifdef CONFIG_TX_EARLY_MODE
@@ -903,6 +928,11 @@ s32	rtl8822cu_init_xmit_priv(PADAPTER padapter)
 
 void	rtl8822cu_free_xmit_priv(PADAPTER padapter)
 {
+	struct xmit_priv *pxmitpriv = &padapter->xmitpriv;
+
+#ifdef PLATFORM_LINUX
+	tasklet_kill(&pxmitpriv->xmit_tasklet);
+#endif
 }
 
 static s32 xmitframe_direct(PADAPTER padapter, struct xmit_frame *pxmitframe)
@@ -997,6 +1027,7 @@ s32 rtl8822cu_hal_mgmt_xmitframe_enqueue(PADAPTER padapter, struct xmit_frame *p
 
 	err = rtw_mgmt_xmitframe_enqueue(padapter, pxmitframe);
 	if (err != _SUCCESS) {
+		rtw_free_xmitbuf(pxmitpriv, pxmitframe->pxmitbuf);
 		rtw_free_xmitframe(pxmitpriv, pxmitframe);
 		pxmitpriv->tx_drop++;
 	} else {

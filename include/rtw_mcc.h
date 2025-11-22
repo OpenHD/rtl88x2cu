@@ -17,7 +17,7 @@
 #ifndef _RTW_MCC_H_
 #define _RTW_MCC_H_
 
-#include <drv_types.h> /* PADAPTER */
+/* #include <drv_types.h> */ /* PADAPTER */
 
 #define MCC_STATUS_PROCESS_MCC_START_SETTING BIT0
 #define MCC_STATUS_PROCESS_MCC_STOP_SETTING BIT1
@@ -54,7 +54,7 @@
 #define MCC_SINGLE_TX_CRITERIA 5 /* Mbps */
 
 #define MAX_MCC_NUM 2
-#ifdef CONFIG_RTL8822C
+#if defined(CONFIG_RTL8822C) || defined(CONFIG_RTL8822E)
 #define DBG_MCC_REG_NUM 3
 #else
 #define DBG_MCC_REG_NUM 4

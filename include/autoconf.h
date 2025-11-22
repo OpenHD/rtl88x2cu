@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2015 - 2017 Realtek Corporation.
+ * Copyright(c) 2015 - 2022 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -19,7 +19,7 @@
  * Public  General Config
  */
 #define AUTOCONF_INCLUDED
-#define RTL871X_MODULE_NAME "88x2CU"
+#define RTL871X_MODULE_NAME "rtl88x2cu_ohd"
 #define DRV_NAME "rtl88x2cu_ohd"
 
 /* Set CONFIG_RTL8822C from Makefile */
@@ -86,17 +86,16 @@
 #endif /* CONFIG_SUPPORT_USB_INT */
 
 #ifdef CONFIG_POWER_SAVING
-	/* #define CONFIG_IPS	1 */
+	#define CONFIG_IPS	1
 	#ifdef CONFIG_IPS
-	/* #define CONFIG_IPS_LEVEL_2 1*/ /*enable this to set default IPS mode to IPS_LEVEL_2*/
-	#define CONFIG_IPS_CHECK_IN_WD /* Do IPS Check in WatchDog.	*/
-	/* #define CONFIG_FWLPS_IN_IPS */
-	#endif
+		#define CONFIG_IPS_CHECK_IN_WD /* Do IPS Check in WatchDog.	*/
+		/* #define CONFIG_FWLPS_IN_IPS */
+	#endif /* CONFIG_IPS */
 	/* #define SUPPORT_HW_RFOFF_DETECTED	1 */
 
 	#define CONFIG_LPS	1
 	#if defined(CONFIG_LPS)
-		/* #define CONFIG_LPS_LCLK	1 */
+		#define CONFIG_LPS_LCLK	1
 	#endif
 
 	#ifdef CONFIG_LPS_LCLK
@@ -108,6 +107,7 @@
 			#define CONFIG_DETECT_CPWM_BY_POLLING
 		#endif /* !CONFIG_SUPPORT_USB_INT */
 		/* #define DBG_CHECK_FW_PS_STATE */
+		#define CONFIG_LPS_PG
 	#endif /* CONFIG_LPS_LCLK */
 
 	#ifdef CONFIG_LPS
@@ -175,7 +175,7 @@
 
 #define CONFIG_SKB_COPY	1 /* amsdu */
 
-#define CONFIG_RTW_LED
+/* #define CONFIG_RTW_LED */
 #ifdef CONFIG_RTW_LED
 	#define CONFIG_RTW_SW_LED
 	#ifdef CONFIG_RTW_SW_LED
@@ -208,8 +208,6 @@
 	#define CONFIG_USB_RX_AGGREGATION	1
 #endif
 
-#define CONFIG_USB_CONFIG_OFFLOAD_8822C
-
 /* #define CONFIG_REDUCE_USB_TX_INT	1 */ /* Trade-off: Improve performance, but may cause TX URBs blocked by USB Host/Bus driver on few platforms. */
 /* #define CONFIG_EASY_REPLACEMENT	1 */
 
@@ -224,6 +222,7 @@
 	#define CONFIG_PREALLOC_RECV_SKB
 	#ifdef CONFIG_PREALLOC_RECV_SKB
 		/* #define CONFIG_FIX_NR_BULKIN_BUFFER */ /* only use PREALLOC_RECV_SKB buffer, don't alloc skb at runtime */
+		#define CONFIG_USB_PROTECT_RX_CLONED_SKB
 	#endif
 #endif
 
@@ -305,6 +304,8 @@
 #define DBG	1
 
 #define DBG_CONFIG_ERROR_DETECT
+#define DBG_CONFIG_ERROR_RESET
+#define RTW_DETECT_HANG
 
 /*
 #define DBG_CONFIG_ERROR_DETECT_INT

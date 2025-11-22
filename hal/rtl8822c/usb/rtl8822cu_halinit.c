@@ -41,6 +41,9 @@ u8 rtl8822cu_fw_ips_init(_adapter *padapter)
 
 		RTW_INFO("%s: Leaving FW_IPS\n", __func__);
 #ifdef CONFIG_LPS_LCLK
+		if (rtw_is_fw_ips_lclk_mode(padapter) == _FALSE)
+			goto send_fwips_h2c;
+
 		/* for polling cpwm */
 		cpwm_orig = 0;
 		rtw_hal_get_hwreg(padapter, HW_VAR_CPWM, &cpwm_orig);
@@ -77,15 +80,19 @@ u8 rtl8822cu_fw_ips_init(_adapter *padapter)
 				break;
 			}
 		} while (1);
+
+send_fwips_h2c:
 #endif /* CONFIG_LPS_LCLK */
 		rtl8822c_set_FwPwrModeInIPS_cmd(padapter, 0);
 
 		rtw_hal_set_hwreg(padapter, HW_VAR_APFM_ON_MAC, &bMacPwrCtrlOn);
 #ifdef CONFIG_LPS_LCLK
 		#ifdef DBG_CHECK_FW_PS_STATE
-		if (rtw_fw_ps_state(padapter) == _FAIL) {
-			RTW_INFO("after hal init, fw ps state in 32k\n");
-			pdbgpriv->dbg_ips_drvopen_fail_cnt++;
+		if (rtw_is_fw_ips_lclk_mode(padapter) == _TRUE) {
+			if (rtw_fw_ps_state(padapter) == _FAIL) {
+				RTW_INFO("after hal init, fw ps state in 32k\n");
+				pdbgpriv->dbg_ips_drvopen_fail_cnt++;
+			}
 		}
 		#endif /* DBG_CHECK_FW_PS_STATE */
 #endif /* CONFIG_LPS_LCLK */
@@ -109,11 +116,14 @@ u8 rtl8822cu_fw_ips_deinit(_adapter *padapter)
 
 		rtl8822c_set_FwPwrModeInIPS_cmd(padapter, 0x1);
 #ifdef CONFIG_LPS_LCLK
+		if (rtw_is_fw_ips_lclk_mode(padapter) == _FALSE)
+			return _SUCCESS;
+
 		/* poll 0x1cc to make sure H2C command already finished by FW; MAC_0x1cc=0 means H2C done by FW. */
 		do {
 			val8 = rtw_read8(padapter, REG_HMETFR);
 			cnt++;
-			RTW_INFO("%s  polling REG_HMETFR=0x%x, cnt=%d\n", __func__, val8, cnt);
+			RTW_DBG("%s  polling REG_HMETFR=0x%x, cnt=%d\n", __func__, val8, cnt);
 			rtw_mdelay_os(10);
 		} while (cnt < 100 && (val8 != 0));
 
@@ -131,7 +141,7 @@ u8 rtl8822cu_fw_ips_deinit(_adapter *padapter)
 			do {
 				val8 = rtw_read8(padapter, REG_CR);
 				cnt++;
-				RTW_INFO("%s  polling 0x100=0x%x, cnt=%d\n", __func__, val8, cnt);
+				RTW_DBG("%s  polling 0x100=0x%x, cnt=%d\n", __func__, val8, cnt);
 				rtw_mdelay_os(10);
 			} while (cnt < 100 && (val8 != 0xEA));
 
@@ -197,18 +207,16 @@ u32 rtl8822cu_init(PADAPTER padapter)
 	systime init_start_time = rtw_get_current_time();
 
 #ifdef CONFIG_FWLPS_IN_IPS
-	if (_SUCCESS == rtl8822cu_fw_ips_init(padapter))
-		goto exit;
+	if (rtw_is_fw_ips_mode(padapter) == _TRUE) {
+		if (_SUCCESS == rtl8822cu_fw_ips_init(padapter))
+			goto exit;
+	}
 #endif
 
 	if (rtl8822c_init(padapter) == _FAIL)
 		status = _FAIL;
 	else
 		hal_init_misc(padapter);
-
-#ifdef CONFIG_USB_CONFIG_OFFLOAD_8822C
-	rtl8822c_set_usb_suspend_mode(padapter);
-#endif
 
 #ifdef CONFIG_FWLPS_IN_IPS
 exit:
@@ -240,8 +248,10 @@ u32 rtl8822cu_deinit(PADAPTER padapter)
 	RTW_INFO("==> %s\n", __func__);
 
 #ifdef CONFIG_FWLPS_IN_IPS
-	if (_SUCCESS == rtl8822cu_fw_ips_deinit(padapter))
-		goto exit;
+	if (rtw_is_fw_ips_mode(padapter) == _TRUE) {
+		if (_SUCCESS == rtl8822cu_fw_ips_deinit(padapter))
+			goto exit;
+	}
 #endif
 
 	hal_deinit_misc(padapter);
@@ -277,9 +287,11 @@ u32 rtl8822cu_inirp_init(PADAPTER padapter)
 	/* Do not sumbit urb repeat */
 	struct pwrctrl_priv *pwrctl = adapter_to_pwrctl(padapter);
 
-	if (pwrctl->bips_processing == _TRUE) {
-		status = _SUCCESS;
-		goto exit;
+	if (rtw_is_fw_ips_mode(padapter) == _TRUE) {
+		if (pwrctl->bips_processing == _TRUE) {
+			status = _SUCCESS;
+			goto exit;
+		}
 	}
 #endif /* CONFIG_FWLPS_IN_IPS */
 
@@ -324,9 +336,19 @@ exit:
 
 u32 rtl8822cu_inirp_deinit(PADAPTER padapter)
 {
+	struct recv_priv	*precvpriv = &padapter->recvpriv;
+	_pkt			*pskb;
 
 	rtw_read_port_cancel(padapter);
 
+	while (NULL != (pskb = skb_dequeue(&precvpriv->rx_skb_queue))) {
+		skb_reset_tail_pointer(pskb);
+		pskb->len = 0;
+		skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+	}
+
+	/* Clean pending recv buf */
+	while (rtw_dequeue_recvbuf(&precvpriv->recv_buf_pending_queue));
 
 	return _SUCCESS;
 }
@@ -432,8 +454,8 @@ void rtl8822cu_interface_configure(PADAPTER padapter)
 #ifdef CONFIG_PLATFORM_NOVATEK_NT72668
 	pHalData->rxagg_usb_size = 0x03;
 	pHalData->rxagg_usb_timeout = 0x20;
-#elif defined(CONFIG_PLATFORM_HISILICON)
-	 /* use 16k to workaround for HISILICON platform */
+#elif defined(CONFIG_PLATFORM_HISILICON) || defined(CONFIG_PLATFORM_ARM_RTD299X)
+	 /* use 16k to workaround for HISILICON and RTK TV platform */
 	pHalData->rxagg_usb_size = 3;
 	pHalData->rxagg_usb_timeout = 8;
 #endif /* CONFIG_PLATFORM_NOVATEK_NT72668 */

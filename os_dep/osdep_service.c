@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2017 Realtek Corporation.
+ * Copyright(c) 2007 - 2021 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -17,11 +17,6 @@
 #define _OSDEP_SERVICE_C_
 
 #include <drv_types.h>
-#include <linux/kthread.h>
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
-#define kthread_complete_and_exit(comp, code) complete_and_exit(comp, code)
-#endif
 
 #define RT_TAG	'1178'
 
@@ -32,9 +27,151 @@ atomic_t _malloc_size = ATOMIC_INIT(0);
 #endif
 #endif /* DBG_MEMORY_LEAK */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
+
+#ifdef DBG_MEM_ERR_FREE
+
+#if (KERNEL_VERSION(3, 7, 0) <= LINUX_VERSION_CODE)
+
+#define DBG_MEM_HASHBITS 10
+
+#define DBG_MEM_TYPE_PHY 0
+#define DBG_MEM_TYPE_VIR 1
+
+/*
+ * DBG_MEM_ERR_FREE is only for the debug purpose.
+ *
+ * There is the limitation that this mechanism only can
+ * support one wifi device, and has problem if there
+ * are two or more wifi devices with one driver on
+ * the same system. It's because dbg_mem_ht is global
+ * variable, and if we move this dbg_mem_ht into struct
+ * dvobj_priv to support more wifi devices, the memory
+ * allocation functions, like rtw_malloc(), need to have
+ * the parameter dvobj to get relative hash table, and
+ * then it is the huge changes for the driver currently.
+ *
+ */
+struct hlist_head dbg_mem_ht[1 << DBG_MEM_HASHBITS];
+
+struct hash_mem {
+	void *mem;
+	int sz;
+	int type;
+	struct hlist_node node;
+};
+
+#endif /* LINUX_VERSION_CODE */
+
+void rtw_dbg_mem_init(void)
+{
+#if (KERNEL_VERSION(3, 7, 0) <= LINUX_VERSION_CODE)
+	hash_init(dbg_mem_ht);
+#endif /* LINUX_VERSION_CODE */
+}
+
+void rtw_dbg_mem_deinit(void)
+{
+#if (KERNEL_VERSION(3, 7, 0) <= LINUX_VERSION_CODE)
+	struct hlist_head *head;
+	struct hlist_node *p;
+	int i;
+
+	for (i = 0; i < HASH_SIZE(dbg_mem_ht); i++) {
+		head = &dbg_mem_ht[i];
+		p = head->first;
+		while (p) {
+			struct hlist_node *prev;
+			struct hash_mem *hm;
+
+			hm = container_of(p, struct hash_mem, node);
+			prev = p;
+			p = p->next;
+
+			RTW_ERR("%s: memory leak - 0x%x\n", __func__, hm->mem);
+			hash_del(prev);
+			kfree(hm);
+		}
+	}
+#endif /* LINUX_VERSION_CODE */
+}
+
+#if (KERNEL_VERSION(3, 7, 0) <= LINUX_VERSION_CODE)
+struct hash_mem *rtw_dbg_mem_find(void *mem)
+{
+	struct hash_mem *hm;
+	struct hlist_head *head;
+	struct hlist_node *p;
+
+	head = &dbg_mem_ht[hash_64((u64)(mem), DBG_MEM_HASHBITS)];
+
+	p = head->first;
+	while (p) {
+		hm = container_of(p, struct hash_mem, node);
+		if (hm->mem == mem)
+			goto out;
+		p = p->next;
+	}
+	hm = NULL;
+out:
+	return hm;
+}
+
+void rtw_dbg_mem_alloc(void *mem, int sz, int type)
+{
+	struct hash_mem *hm;
+
+	hm = rtw_dbg_mem_find(mem);
+	if (!hm) {
+		hm = (struct hash_mem *)kmalloc(sizeof(*hm), GFP_ATOMIC);
+		hm->mem = mem;
+		hm->sz = sz;
+		hm->type = type;
+		hash_add(dbg_mem_ht, &hm->node, (u64)(mem));
+	} else {
+		RTW_ERR("%s mem(%x) is in hash already\n", __func__, mem);
+		rtw_warn_on(1);
+	}
+}
+
+bool rtw_dbg_mem_free(void *mem, int sz, int type)
+{
+	struct hash_mem *hm;
+	bool ret;
+
+	hm = rtw_dbg_mem_find(mem);
+	if (!hm) {
+		RTW_ERR("%s cannot find allocated memory: %x\n",
+			__func__, mem);
+		rtw_warn_on(1);
+		return false;
+	}
+
+	if (hm->sz != sz) {
+		RTW_ERR("%s memory (%x) size mismatch free(%d) != alloc(%d)\n",
+			__func__, mem, sz, hm->sz);
+		rtw_warn_on(1);
+		ret = false;
+		goto out;
+	}
+
+	if (hm->type != type) {
+		RTW_ERR("%s memory (%x) type mismatch free(%d) != alloc(%d)\n",
+			__func__, mem, type, hm->type);
+		rtw_warn_on(1);
+		ret = false;
+		goto out;
+	}
+	ret = true;
+
+out:
+	hash_del(&hm->node);
+	kfree(hm);
+
+	return ret;
+}
+
+#endif /* LINUX_VERSION_CODE */
+#endif /* DBG_MEM_ERR_FREE */
 
 #if defined(PLATFORM_LINUX)
 /*
@@ -95,6 +232,11 @@ inline void *_rtw_vmalloc(u32 sz)
 	NdisAllocateMemoryWithTag(&pbuf, sz, RT_TAG);
 #endif
 
+#ifdef DBG_MEM_ERR_FREE
+	if (pbuf)
+		rtw_dbg_mem_alloc(pbuf, sz, DBG_MEM_TYPE_VIR);
+#endif /* DBG_MEM_ERR_FREE */
+
 #ifdef DBG_MEMORY_LEAK
 #ifdef PLATFORM_LINUX
 	if (pbuf != NULL) {
@@ -129,6 +271,11 @@ inline void *_rtw_zvmalloc(u32 sz)
 
 inline void _rtw_vmfree(void *pbuf, u32 sz)
 {
+#ifdef DBG_MEM_ERR_FREE
+	if (!rtw_dbg_mem_free(pbuf, sz, DBG_MEM_TYPE_VIR))
+		return;
+#endif /* DBG_MEM_ERR_FREE */
+
 #ifdef PLATFORM_LINUX
 	vfree(pbuf);
 #endif
@@ -169,6 +316,11 @@ void *_rtw_malloc(u32 sz)
 
 #endif
 
+#ifdef DBG_MEM_ERR_FREE
+	if (pbuf)
+		rtw_dbg_mem_alloc(pbuf, sz, DBG_MEM_TYPE_PHY);
+#endif /* DBG_MEM_ERR_FREE */
+
 #ifdef DBG_MEMORY_LEAK
 #ifdef PLATFORM_LINUX
 	if (pbuf != NULL) {
@@ -199,7 +351,6 @@ void *_rtw_zmalloc(u32 sz)
 #ifdef PLATFORM_WINDOWS
 		NdisFillMemory(pbuf, sz, 0);
 #endif
-
 	}
 
 	return pbuf;
@@ -208,6 +359,11 @@ void *_rtw_zmalloc(u32 sz)
 
 void _rtw_mfree(void *pbuf, u32 sz)
 {
+
+#ifdef DBG_MEM_ERR_FREE
+	if (!rtw_dbg_mem_free(pbuf, sz, DBG_MEM_TYPE_PHY))
+		return;
+#endif /* DBG_MEM_ERR_FREE */
 
 #ifdef PLATFORM_LINUX
 #ifdef RTK_DMP_PLATFORM
@@ -282,6 +438,38 @@ struct sk_buff *skb_clone(const struct sk_buff *skb)
 }
 
 #endif /* PLATFORM_FREEBSD */
+
+#ifdef CONFIG_PCIE_DMA_COHERENT
+struct sk_buff *dev_alloc_skb_coherent(struct pci_dev *pdev, unsigned int size)
+{
+	struct sk_buff *skb = NULL;
+	unsigned char *data = NULL;
+
+	/* skb = _rtw_zmalloc(sizeof(struct sk_buff)); */ /* for skb->len, etc. */
+
+	skb = _rtw_malloc(sizeof(struct sk_buff));
+	if (!skb)
+		goto out;
+
+	data = dma_alloc_coherent(&pdev->dev, size, (dma_addr_t *)&skb->cb, GFP_KERNEL);
+
+	if (!data)
+		goto nodata;
+
+	skb->head = data;
+	skb->data = data;
+	skb_reset_tail_pointer(skb);
+	skb->end = skb->tail + size;
+	skb->len = 0;
+out:
+	return skb;
+nodata:
+	_rtw_mfree(skb, sizeof(struct sk_buff));
+	skb = NULL;
+	goto out;
+
+}
+#endif
 
 inline struct sk_buff *_rtw_skb_alloc(u32 sz)
 {
@@ -1317,7 +1505,11 @@ u32 _rtw_down_sema(_sema *sema)
 inline void thread_exit(_completion *comp)
 {
 #ifdef PLATFORM_LINUX
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
+	complete_and_exit(comp, 0);
+#else
 	kthread_complete_and_exit(comp, 0);
+#endif
 #endif
 
 #ifdef PLATFORM_FREEBSD
@@ -2385,6 +2577,7 @@ inline bool ATOMIC_INC_UNLESS(ATOMIC_T *v, int u)
 }
 
 #ifdef PLATFORM_LINUX
+#if !defined(CONFIG_RTW_ANDROID_GKI)
 /*
 * Open a file with the specific @param path, @param flag, @param mode
 * @param fpp the pointer of struct file pointer to get struct file pointer while file opening is success
@@ -2542,53 +2735,6 @@ static int isFileReadable(const char *path, u32 *sz)
 }
 
 /*
-* Open the file with @param path and retrive the file content into memory starting from @param buf for @param sz at most
-* @param path the path of the file to open and read
-* @param buf the starting address of the buffer to store file content
-* @param sz how many bytes to read at most
-* @return the byte we've read, or Linux specific error code
-*/
-static int retriveFromFile(const char *path, u8 *buf, u32 sz)
-{
-	int ret = -1;
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-	mm_segment_t oldfs;
-	#endif
-	struct file *fp;
-
-	if (path && buf) {
-		ret = openFile(&fp, path, O_RDONLY, 0);
-		if (0 == ret) {
-			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			oldfs = get_fs();
-			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
-			set_fs(KERNEL_DS);
-			#else
-			set_fs(get_ds());
-			#endif
-			#endif
-
-			ret = readFile(fp, buf, sz);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			set_fs(oldfs);
-			#endif
-			closeFile(fp);
-
-			RTW_INFO("%s readFile, ret:%d\n", __FUNCTION__, ret);
-
-		} else
-			RTW_INFO("%s openFile path:%s Fail, ret:%d\n", __FUNCTION__, path, ret);
-	} else {
-		RTW_INFO("%s NULL pointer\n", __FUNCTION__);
-		ret =  -EINVAL;
-	}
-	return ret;
-}
-
-/*
 * Open the file with @param path and wirte @param sz byte of data starting from @param buf into the file
 * @param path the path of the file to open and write
 * @param buf the starting address of the data to write into file
@@ -2634,8 +2780,10 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 	}
 	return ret;
 }
+#endif /* !defined(CONFIG_RTW_ANDROID_GKI)*/
 #endif /* PLATFORM_LINUX */
 
+#if !defined(CONFIG_RTW_ANDROID_GKI)
 /*
 * Test if the specifi @param path is a direct and readable
 * @param path the path of the direct to test
@@ -2653,6 +2801,117 @@ int rtw_is_dir_readable(const char *path)
 	return _FALSE;
 #endif
 }
+#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
+
+/*
+* Open the file with @param path and retrive the file content into memory starting from @param buf for @param sz at most
+* @param path the path of the file to open and read
+* @param buf the starting address of the buffer to store file content
+* @param sz how many bytes to read at most
+* @return the byte we've read, or Linux specific error code
+*/
+static int retriveFromFile(const char *path, u8 *buf, u32 sz)
+{
+#if defined(CONFIG_RTW_ANDROID_GKI)
+	int ret = -EINVAL;
+	const struct firmware *fw = NULL;
+	char* const delim = "/";
+	char *name, *token, *cur, *path_tmp = NULL;
+
+
+	if (path == NULL || buf == NULL) {
+		RTW_ERR("%s() NULL pointer\n", __func__);
+		goto err;
+	}
+
+	path_tmp = kstrdup(path, GFP_KERNEL);
+	if (path_tmp == NULL) {
+		RTW_ERR("%s() cannot copy path for parsing file name\n", __func__);
+		goto err;
+	}
+
+	/* parsing file name from path */
+	cur = path_tmp;
+	token = strsep(&cur, delim);
+	while (token != NULL) {
+		token = strsep(&cur, delim);
+		if(token)
+			name = token;
+	}
+
+	if (name == NULL) {
+		RTW_ERR("%s() parsing file name fail\n", __func__);
+		goto err;
+	}
+
+	/* request_firmware() will find file in /vendor/firmware but not in path */
+	ret = request_firmware(&fw, name, NULL);
+	if (ret == 0) {
+		RTW_INFO("%s() Success. retrieve file : %s, file size : %zu\n", __func__, name, fw->size);
+
+		if ((u32)fw->size < sz) {
+			_rtw_memcpy(buf, fw->data, (u32)fw->size);
+			ret = (u32)fw->size;
+			goto exit;
+		} else {
+			RTW_ERR("%s() file size : %zu exceed buf size : %u\n", __func__, fw->size, sz);
+			ret = -EFBIG;
+			goto err;
+		}
+	} else {
+		RTW_ERR("%s() Fail. retrieve file : %s, error : %d\n", __func__, name, ret);
+		goto err;
+	}
+
+
+
+err:
+	RTW_ERR("%s() Fail. retrieve file : %s, error : %d\n", __func__, path, ret);
+exit:
+	if (path_tmp)
+		kfree(path_tmp);
+	if (fw)
+		release_firmware(fw);
+	return ret;
+#else /* !defined(CONFIG_RTW_ANDROID_GKI) */
+	int ret = -1;
+	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+	mm_segment_t oldfs;
+	#endif
+	struct file *fp;
+
+	if (path && buf) {
+		ret = openFile(&fp, path, O_RDONLY, 0);
+		if (0 == ret) {
+			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+			oldfs = get_fs();
+			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
+			set_fs(KERNEL_DS);
+			#else
+			set_fs(get_ds());
+			#endif
+			#endif
+
+			ret = readFile(fp, buf, sz);
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+			set_fs(oldfs);
+			#endif
+			closeFile(fp);
+
+			RTW_INFO("%s readFile, ret:%d\n", __FUNCTION__, ret);
+
+		} else
+			RTW_INFO("%s openFile path:%s Fail, ret:%d\n", __FUNCTION__, path, ret);
+	} else {
+		RTW_INFO("%s NULL pointer\n", __FUNCTION__);
+		ret =  -EINVAL;
+	}
+	return ret;
+#endif /* defined(CONFIG_RTW_ANDROID_GKI) */
+}
 
 /*
 * Test if the specifi @param path is a file and readable
@@ -2662,10 +2921,15 @@ int rtw_is_dir_readable(const char *path)
 int rtw_is_file_readable(const char *path)
 {
 #ifdef PLATFORM_LINUX
+#if !defined(CONFIG_RTW_ANDROID_GKI)
 	if (isFileReadable(path, NULL) == 0)
 		return _TRUE;
 	else
 		return _FALSE;
+#else
+	RTW_INFO("%s() Android GKI prohibbit kernel_read, return _TRUE\n", __func__);
+	return  _TRUE;
+#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
 #else
 	/* Todo... */
 	return _FALSE;
@@ -2681,10 +2945,16 @@ int rtw_is_file_readable(const char *path)
 int rtw_is_file_readable_with_size(const char *path, u32 *sz)
 {
 #ifdef PLATFORM_LINUX
+#if !defined(CONFIG_RTW_ANDROID_GKI)
 	if (isFileReadable(path, sz) == 0)
 		return _TRUE;
 	else
 		return _FALSE;
+#else
+	RTW_INFO("%s() Android GKI prohibbit kernel_read, return _TRUE\n", __func__);
+	*sz = 0;
+	return  _TRUE;
+#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
 #else
 	/* Todo... */
 	return _FALSE;
@@ -2728,6 +2998,7 @@ int rtw_retrieve_from_file(const char *path, u8 *buf, u32 sz)
 #endif
 }
 
+#if !defined(CONFIG_RTW_ANDROID_GKI)
 /*
 * Open the file with @param path and wirte @param sz byte of data starting from @param buf into the file
 * @param path the path of the file to open and write
@@ -2745,6 +3016,7 @@ int rtw_store_to_file(const char *path, u8 *buf, u32 sz)
 	return 0;
 #endif
 }
+#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
 
 #ifdef PLATFORM_LINUX
 struct net_device *rtw_alloc_etherdev_with_old_priv(int sizeof_priv, void *old_priv)
@@ -2759,7 +3031,11 @@ struct net_device *rtw_alloc_etherdev_with_old_priv(int sizeof_priv, void *old_p
 #endif
 	if (!pnetdev)
 		goto RETURN;
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
+	pnetdev->min_mtu = WLAN_MIN_ETHFRM_LEN;
+	pnetdev->mtu = WLAN_MAX_ETHFRM_LEN;
+	pnetdev->max_mtu = WLAN_DATA_MAXLEN;
+#endif
 	pnpi = netdev_priv(pnetdev);
 	pnpi->priv = old_priv;
 	pnpi->sizeof_priv = sizeof_priv;
@@ -2781,6 +3057,11 @@ struct net_device *rtw_alloc_etherdev(int sizeof_priv)
 	if (!pnetdev)
 		goto RETURN;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
+	pnetdev->min_mtu = WLAN_MIN_ETHFRM_LEN;
+	pnetdev->mtu = WLAN_MAX_ETHFRM_LEN;
+	pnetdev->max_mtu = WLAN_DATA_MAXLEN;
+#endif
 	pnpi = netdev_priv(pnetdev);
 
 	pnpi->priv = rtw_zvmalloc(sizeof_priv);
@@ -2938,22 +3219,15 @@ inline u32 rtw_random32(void)
 
 void rtw_buf_free(u8 **buf, u32 *buf_len)
 {
-	u32 ori_len;
-
-	if (!buf || !buf_len)
+	if (!buf || !(*buf) || !buf_len)
 		return;
 
-	ori_len = *buf_len;
-
-	if (*buf) {
-		u32 tmp_buf_len = *buf_len;
-		*buf_len = 0;
-		rtw_mfree(*buf, tmp_buf_len);
-		*buf = NULL;
-	}
+	rtw_mfree(*buf, *buf_len);
+	*buf = NULL;
+	*buf_len = 0;
 }
 
-void rtw_buf_update(u8 **buf, u32 *buf_len, u8 *src, u32 src_len)
+void rtw_buf_update(u8 **buf, u32 *buf_len, const u8 *src, u32 src_len)
 {
 	u32 ori_len = 0, dup_len = 0;
 	u8 *ori = NULL;
@@ -3381,6 +3655,20 @@ inline BOOLEAN is_space(char c)
 }
 
 /**
+* is_decimal -
+*
+* Return	TRUE if chTmp is represent for decimal digit
+*		FALSE otherwise.
+*/
+inline BOOLEAN is_decimal(char chTmp)
+{
+	if ((chTmp >= '0' && chTmp <= '9'))
+		return _TRUE;
+	else
+		return _FALSE;
+}
+
+/**
 * IsHexDigit -
 *
 * Return	TRUE if chTmp is represent for hex digit
@@ -3483,5 +3771,48 @@ int hwaddr_aton_i(const char *txt, u8 *addr)
 	}
 
 	return 0;
+}
+
+void ustrs_add(char **ustrs, int *ustrs_len, const char *str)
+{
+	char *tmp_ustrs;
+	int tmp_ustrs_len;
+
+	if (!str || !strlen(str))
+		return;
+
+	tmp_ustrs = *ustrs;
+	tmp_ustrs_len = *ustrs_len;
+	if (tmp_ustrs) {
+		const char *pos;
+
+		/* search for same string */
+		for (pos = tmp_ustrs; pos < tmp_ustrs + tmp_ustrs_len; pos += strlen(pos) + 1) {
+			if (strcmp(pos, str) == 0)
+				return;
+		}
+
+		/* no match, realloc and add */
+		tmp_ustrs = rtw_malloc(tmp_ustrs_len + strlen(str) + 1);
+		if (!tmp_ustrs) {
+			rtw_warn_on(1);
+			return;
+		}
+		_rtw_memcpy((void *)tmp_ustrs, *ustrs, tmp_ustrs_len);
+		_rtw_memcpy((void *)(tmp_ustrs + tmp_ustrs_len), str, strlen(str) + 1);
+		rtw_mfree((void *)*ustrs, tmp_ustrs_len);
+		*ustrs = tmp_ustrs;
+		*ustrs_len += strlen(str) + 1;
+
+	} else {
+		tmp_ustrs = rtw_malloc(strlen(str) + 1);
+		if (!tmp_ustrs) {
+			rtw_warn_on(1);
+			return;
+		}
+		_rtw_memcpy((void *)tmp_ustrs, str, strlen(str) + 1);
+		*ustrs = tmp_ustrs;
+		*ustrs_len = strlen(str) + 1;
+	}
 }
 
