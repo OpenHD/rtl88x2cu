@@ -2997,9 +2997,13 @@ s8 phy_get_txpwr_lmt(
 	s8 ww_lmt_val = phy_txpwr_ww_lmt_value(Adapter);
 	s8 lmt = hal_spec->txgi_max;
 
+#if CONFIG_TXPWR_LIMIT
 	if ((Adapter->registrypriv.RegEnableTxPowerLimit == 2 && hal_data->EEPROMRegulatory != 1) ||
 		Adapter->registrypriv.RegEnableTxPowerLimit == 0)
 		goto exit;
+#else
+	goto exit;
+#endif
 
 	if (Band != BAND_ON_2_4G && Band != BAND_ON_5G) {
 		RTW_ERR("%s invalid band:%u\n", __func__, Band);
@@ -3153,12 +3157,17 @@ s8 phy_get_txpwr_lmt_sub_chs(_adapter *adapter
 	s8 final_lmt = reg_max ? 0 : hal_spec->txgi_max;
 	u8 final_bw = CHANNEL_WIDTH_MAX, final_cch = cch;
 
+#if CONFIG_TXPWR_LIMIT
 	if ((adapter->registrypriv.RegEnableTxPowerLimit == 2 && hal_data->EEPROMRegulatory != 1) ||
 		adapter->registrypriv.RegEnableTxPowerLimit == 0
 	) {
 		final_lmt = hal_spec->txgi_max;
 		goto exit;
 	}
+#else
+	final_lmt = hal_spec->txgi_max;
+	goto exit;
+#endif
 
 #ifdef CONFIG_MP_INCLUDED
 	/* MP mode channel don't use secondary channel */
@@ -5959,9 +5968,13 @@ s8 phy_get_txpwr_regd_lmt(_adapter *adapter, struct hal_spec_t *hal_spec, u8 cch
 	s16 total_mbm = UNSPECIFIED_MBM;
 	s8 lmt;
 
+#if CONFIG_TXPWR_LIMIT
 	if ((adapter->registrypriv.RegEnableTxPowerLimit == 2 && hal_data->EEPROMRegulatory != 1) ||
 		adapter->registrypriv.RegEnableTxPowerLimit == 0)
 		goto exit;
+#else
+	goto exit;
+#endif
 
 #ifdef CONFIG_REGD_SRC_FROM_OS
 	if (rfctl->regd_src == REGD_SRC_OS)
