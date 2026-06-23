@@ -320,10 +320,10 @@ _HAL_INTFS_FILES :=	hal/hal_intf.o \
 			hal/led/hal_$(HCI_NAME)_led.o
 
 
-EXTRA_CFLAGS += -I$(src)/platform
+EXTRA_CFLAGS += -I$(RTW_SOURCE_DIR)/platform
 _PLATFORM_FILES := platform/platform_ops.o
 
-EXTRA_CFLAGS += -I$(src)/hal/btc
+EXTRA_CFLAGS += -I$(RTW_SOURCE_DIR)/hal/btc
 
 ########### HAL_RTL8188E #################################
 ifeq ($(CONFIG_RTL8188E), y)
@@ -2603,6 +2603,8 @@ rtk_core += \
 		core/crypto/sha256-prf.o \
 		core/crypto/rtw_crypto_wrap.o \
 		core/rtw_swcrypto.o
+
+ccflags-y += $(EXTRA_CFLAGS)
 
 $(MODULE_NAME)-y += $(rtk_core)
 
