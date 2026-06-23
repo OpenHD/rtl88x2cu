@@ -81,6 +81,8 @@
 	#define CONFIG_WIRELESS_EXT
 #endif
 
+#include <linux/timer.h>
+
 /* Monitor mode */
 #include <net/ieee80211_radiotap.h>
 
