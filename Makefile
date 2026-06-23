@@ -46,7 +46,9 @@ ifeq ($(GCC_VER_49),1)
 EXTRA_CFLAGS += -Wno-date-time	# Fix compile error && warning on gcc 4.9 and later
 endif
 
-EXTRA_CFLAGS += -I$(src)/include
+RTW_SOURCE_DIR := $(if $(src),$(src),$(if $(M),$(M),$(CURDIR)))
+
+EXTRA_CFLAGS += -I$(RTW_SOURCE_DIR)/include
 
 EXTRA_LDFLAGS += --strip-debug
 
@@ -2585,7 +2587,7 @@ ifeq ($(CONFIG_SDIO_HCI), y)
 rtk_core += core/rtw_sdio.o
 endif
 
-EXTRA_CFLAGS += -I$(src)/core/crypto
+EXTRA_CFLAGS += -I$(RTW_SOURCE_DIR)/core/crypto
 rtk_core += \
 		core/crypto/aes-internal.o \
 		core/crypto/aes-internal-enc.o \
@@ -2628,7 +2630,7 @@ export CONFIG_RTL8822CU = m
 all: modules
 
 modules:
-	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KSRC) M=$(M)  modules
+	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KSRC) M=$(RTW_SOURCE_DIR)  modules
 #	$(CC_STRIP) --strip-unneeded ${OUT_DIR}/$(M)/$(MODULE_NAME).ko
 
 strip:
@@ -2643,7 +2645,7 @@ uninstall:
 	/sbin/depmod -a ${KVER}
 
 modules_install:
-	$(MAKE) INSTALL_MOD_STRIP=1 M=$(M) -C $(KSRC) modules_install
+	$(MAKE) INSTALL_MOD_STRIP=1 M=$(RTW_SOURCE_DIR) -C $(KSRC) modules_install
 #	mkdir -p ${OUT_DIR}/../vendor_lib/modules
 #	cd ${OUT_DIR}/$(M)/; find -name $(MODULE_NAME).ko -exec cp {} ${OUT_DIR}/../vendor_lib/modules/ \;
 
@@ -2703,23 +2705,4 @@ clean:
 	rm -fr Module.symvers ; rm -fr Module.markers ; rm -fr modules.order
 	rm -fr *.mod.c *.mod *.o .*.cmd *.ko *~
 	rm -fr .tmp_versions
-endif
-
-
-############ ANDROID COMMON KERNEL ############
-# Convert to absolute path
-ifneq ($(srctree),)
-_EXTRA_CFLAGS :=
-_INC_CFLAGS :=
-$(foreach flag,$(EXTRA_CFLAGS),\
- $(if $(shell echo $(flag) | grep "\-I"),\
-  $(eval _INC_CFLAGS += $(flag)),\
-  $(eval _EXTRA_CFLAGS += $(flag))\
- )\
-)
-_INC_CFLAGS := \
-$(foreach flag,$(subst -I,,$(_INC_CFLAGS)),\
- $(shell if test -d $(srctree)/$(flag); then echo -I$$(cd $(srctree)/$(flag) && pwd); else echo -I$(flag); fi)\
-)
-EXTRA_CFLAGS := $(_EXTRA_CFLAGS) $(_INC_CFLAGS)
 endif
