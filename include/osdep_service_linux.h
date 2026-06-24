@@ -83,6 +83,16 @@
 
 #include <linux/timer.h>
 
+#ifndef from_timer
+	#define from_timer(var, callback_timer, timer_fieldname) \
+		container_of(callback_timer, typeof(*var), timer_fieldname)
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+	#define del_timer(timer) timer_delete(timer)
+	#define del_timer_sync(timer) timer_delete_sync(timer)
+#endif
+
 /* Monitor mode */
 #include <net/ieee80211_radiotap.h>
 
