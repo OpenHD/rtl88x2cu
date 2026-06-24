@@ -282,44 +282,19 @@ jobs:
             fi
             [[ -e "${build_dir}/Makefile" ]] || return 1
 
-            kbuild_tool_is_usable() {
-              local tool="$1"
-              local status=0
-              [[ -x "${tool}" ]] || return 1
-              "${tool}" >/dev/null 2>&1 || status=$?
-              [[ "${status}" -ne 126 && "${status}" -ne 127 ]]
-            }
-
-            if ! kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep"; then
-              rm -f "${build_dir}/scripts/basic/fixdep"
+            if [[ ! -x "${build_dir}/scripts/basic/fixdep" ]]; then
               make -C "${build_dir}" scripts/basic/fixdep || make -C "${build_dir}" scripts || true
-              if ! kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep" && [[ -f "${build_dir}/scripts/basic/fixdep.c" ]]; then
+              if [[ ! -x "${build_dir}/scripts/basic/fixdep" && -f "${build_dir}/scripts/basic/fixdep.c" ]]; then
                 gcc -O2 -Wall -Wmissing-prototypes -Wstrict-prototypes \
                   -o "${build_dir}/scripts/basic/fixdep" "${build_dir}/scripts/basic/fixdep.c"
               fi
-              if ! kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep" && [[ "${kver}" == *-120hz ]]; then
-                base_kver="${kver%-120hz}"
-                mkdir -p "${build_dir}/scripts/basic"
-                for fixdep_candidate in \
-                  "/lib/modules/${base_kver}/build/scripts/basic/fixdep" \
-                  "/usr/src/linux-headers-${base_kver}/scripts/basic/fixdep"; do
-                  [[ -f "${fixdep_candidate}" ]] || continue
-                  cp "${fixdep_candidate}" "${build_dir}/scripts/basic/fixdep"
-                  chmod +x "${build_dir}/scripts/basic/fixdep"
-                  kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep" && break
-                done
-              fi
-              if ! kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep"; then
-                mkdir -p "${build_dir}/scripts/basic"
-                while IFS= read -r fixdep_candidate; do
-                  cp "${fixdep_candidate}" "${build_dir}/scripts/basic/fixdep"
-                  chmod +x "${build_dir}/scripts/basic/fixdep"
-                  kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep" && break
-                done < <(find /usr/src /lib/modules -path '*/scripts/basic/fixdep' -type f -executable 2>/dev/null)
+              if [[ ! -x "${build_dir}/scripts/basic/fixdep" ]]; then
+                fixdep_candidate="$(find /usr/src /lib/modules -path '*/scripts/basic/fixdep' -type f -executable 2>/dev/null | head -n1 || true)"
+                [[ -n "${fixdep_candidate}" ]] && cp "${fixdep_candidate}" "${build_dir}/scripts/basic/fixdep"
               fi
               [[ -f "${build_dir}/scripts/basic/fixdep" ]] && chmod +x "${build_dir}/scripts/basic/fixdep"
             fi
-            kbuild_tool_is_usable "${build_dir}/scripts/basic/fixdep"
+            [[ -x "${build_dir}/scripts/basic/fixdep" ]]
           }
 
           supported_extra_cflags() {
